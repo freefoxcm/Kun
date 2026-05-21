@@ -232,7 +232,7 @@ async function startFeishuInstallQrcode(isLark: boolean): Promise<ClawPlatformIn
       url,
       deviceCode,
       interval: normalizeIntervalSeconds(data.interval, 5),
-      expireIn: normalizeIntervalSeconds(data.expire_in, 300)
+      expireIn: normalizeIntervalSeconds(data.expire_in ?? data.expires_in, 300)
     }
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) }

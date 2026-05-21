@@ -18,6 +18,7 @@ import type {
 import type { GuiUpdateDownloadResult, GuiUpdateInfo, GuiUpdateInstallResult, GuiUpdateState } from '../../shared/gui-update'
 import {
   clawMirrorPayloadSchema,
+  clawImInstallPollPayloadSchema,
   clawTaskFromTextPayloadSchema,
   deepseekConfigContentSchema,
   defaultPathSchema,
@@ -361,16 +362,7 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
   ipcMain.handle(
     'claw:im-install:poll',
     async (_, payload: unknown) => {
-      const request = parseIpcPayload(
-        'claw:im-install:poll',
-        z
-          .object({
-            provider: z.literal('feishu'),
-            deviceCode: z.string().trim().min(1).max(512)
-          })
-          .strict(),
-        payload
-      )
+      const request = parseIpcPayload('claw:im-install:poll', clawImInstallPollPayloadSchema, payload)
       return pollFeishuInstall(request.deviceCode)
     }
   )

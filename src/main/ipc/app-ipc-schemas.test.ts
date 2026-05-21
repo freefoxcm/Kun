@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  clawImInstallPollPayloadSchema,
   isSafeOpenExternalUrl,
   runtimeRequestPayloadSchema,
   shellOpenExternalUrlSchema,
@@ -34,5 +35,15 @@ describe('app-ipc-schemas', () => {
         sinceSeq: -1
       })
     ).toThrow()
+  })
+
+  it('accepts long Feishu install device codes', () => {
+    const deviceCode = 'x'.repeat(2_048)
+    const payload = clawImInstallPollPayloadSchema.parse({
+      provider: 'feishu',
+      deviceCode
+    })
+
+    expect(payload.deviceCode).toBe(deviceCode)
   })
 })

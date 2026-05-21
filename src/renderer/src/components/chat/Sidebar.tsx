@@ -62,6 +62,7 @@ export function Sidebar({
   const activeClawChannelId = useChatStore((s) => s.activeClawChannelId)
   const selectClawChannel = useChatStore((s) => s.selectClawChannel)
   const addClawChannel = useChatStore((s) => s.addClawChannel)
+  const deleteClawChannel = useChatStore((s) => s.deleteClawChannel)
   const resetClawChannelSession = useChatStore((s) => s.resetClawChannelSession)
 
   const [appVersion, setAppVersion] = useState('')
@@ -201,6 +202,7 @@ export function Sidebar({
         onAddProvider={(provider, agentProfile, platformCredential, options) =>
           addClawChannel(provider, agentProfile, platformCredential, options)
         }
+        onDeleteChannel={(channelId) => deleteClawChannel(channelId)}
         t={t}
       />
     ) : null}

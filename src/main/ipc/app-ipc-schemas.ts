@@ -12,6 +12,7 @@ const MAX_NOTIFICATION_BODY_LENGTH = 5_000
 const MAX_CHANNEL_TEXT_LENGTH = 100_000
 const MAX_SKILL_FILE_BYTES = 1_000_000
 const MAX_CONFIG_FILE_BYTES = 2_000_000
+const MAX_DEVICE_CODE_LENGTH = 8_192
 
 const SAFE_OPEN_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
 
@@ -148,6 +149,13 @@ export const clawTaskFromTextPayloadSchema = z
     channelId: z.string().trim().min(1).max(MAX_ID_LENGTH).nullable().optional(),
     modelHint: z.string().trim().min(1).max(128).nullable().optional(),
     mode: z.enum(['agent', 'plan']).nullable().optional()
+  })
+  .strict()
+
+export const clawImInstallPollPayloadSchema = z
+  .object({
+    provider: z.literal('feishu'),
+    deviceCode: trimmedString(MAX_DEVICE_CODE_LENGTH)
   })
   .strict()
 

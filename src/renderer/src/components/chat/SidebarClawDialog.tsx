@@ -14,15 +14,18 @@ import {
   QrCode,
   RadioTower,
   Settings,
+  Trash2,
   X
 } from 'lucide-react'
 import type {
   ClawImAgentProfileV1,
+  ClawImChannelV1,
   ClawImPlatformCredentialV1,
   ClawImProvider,
   ClawModel,
   ClawRunMode
 } from '@shared/app-settings'
+import type { ClawImInstallQrResult } from '@shared/ds-gui-api'
 import {
   ClawProviderLogo,
   clawProviderDisplayLabel
@@ -55,6 +58,7 @@ export function ClawAddImDialog({
   channels,
   onClose,
   onAddProvider,
+  onDeleteChannel,
   t
 }: ClawAddImDialogProps): ReactElement {
   const configuredProviders = useMemo(
@@ -306,9 +310,21 @@ export function ClawAddImDialog({
     setError(null)
     setPlatformCredential(undefined)
     setInstallQr({ status: 'loading', url: '', deviceCode: '', timeLeft: 0, error: '' })
-    const result = await window.dsGui.startClawImInstallQr(officialInstallProvider, {
-      isLark: officialInstallTarget === 'lark'
-    })
+    let result: ClawImInstallQrResult
+    try {
+      result = await window.dsGui.startClawImInstallQr(officialInstallProvider, {
+        isLark: officialInstallTarget === 'lark'
+      })
+    } catch (e) {
+      setInstallQr({
+        status: 'error',
+        url: '',
+        deviceCode: '',
+        timeLeft: 0,
+        error: e instanceof Error ? e.message : String(e)
+      })
+      return
+    }
     if (!result.ok) {
       setInstallQr({
         status: 'error',
@@ -343,28 +359,37 @@ export function ClawAddImDialog({
     }, 1000)
     installPollTimerRef.current = window.setInterval(() => {
       void (async () => {
-        const poll = await window.dsGui.pollClawImInstall(officialInstallProvider, result.deviceCode)
-        if (poll.done) {
-          clearInstallTimers()
-          setPlatformCredential({
-            kind: poll.kind,
-            appId: poll.appId,
-            appSecret: poll.appSecret,
-            domain: poll.domain,
-            createdAt: new Date().toISOString()
-          })
-          setInstallQr((current) => ({
-            ...current,
-            status: 'success',
-            error: '',
-            timeLeft: 0
-          }))
-        } else if (poll.error) {
+        try {
+          const poll = await window.dsGui.pollClawImInstall(officialInstallProvider, result.deviceCode)
+          if (poll.done) {
+            clearInstallTimers()
+            setPlatformCredential({
+              kind: poll.kind,
+              appId: poll.appId,
+              appSecret: poll.appSecret,
+              domain: poll.domain,
+              createdAt: new Date().toISOString()
+            })
+            setInstallQr((current) => ({
+              ...current,
+              status: 'success',
+              error: '',
+              timeLeft: 0
+            }))
+          } else if (poll.error) {
+            clearInstallTimers()
+            setInstallQr((current) => ({
+              ...current,
+              status: 'error',
+              error: poll.error ?? t('clawAddImOfficialQrFailed')
+            }))
+          }
+        } catch (e) {
           clearInstallTimers()
           setInstallQr((current) => ({
             ...current,
             status: 'error',
-            error: poll.error ?? t('clawAddImOfficialQrFailed')
+            error: e instanceof Error ? e.message : String(e)
           }))
         }
       })()
@@ -459,6 +484,22 @@ export function ClawAddImDialog({
           responseTimeoutMs: responseTimeoutSec * 1000
         }
       })
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleDeleteChannel = async (channel: ClawImChannelV1): Promise<void> => {
+    if (busy || typeof onDeleteChannel !== 'function') return
+    const confirmMessage = t('clawDeleteImConfirm', { name: channel.label })
+    if (!window.confirm(confirmMessage)) return
+    setBusy(true)
+    setError(null)
+    try {
+      await onDeleteChannel(channel.id)
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -602,34 +643,50 @@ export function ClawAddImDialog({
                           CLAW_ADD_PROVIDER_OPTIONS.find((item) => item.id === channel.provider)
                           ?? CLAW_ADD_PROVIDER_OPTIONS[0]
                         return (
-                          <button
+                          <div
                             key={channel.id}
-                            type="button"
-                            onClick={() => enterManageConfigure(channel.id)}
-                            className={`flex min-h-[82px] min-w-0 items-center gap-3 rounded-2xl border px-4 py-3 text-left transition ${
+                            className={`flex min-h-[82px] min-w-0 items-center gap-2 rounded-2xl border px-3 py-3 transition ${
                               active
                                 ? 'border-accent/55 bg-accent/10 text-ds-ink shadow-sm ring-2 ring-accent/10'
                                 : 'border-ds-border bg-ds-card text-ds-muted hover:bg-ds-hover hover:text-ds-ink'
                             }`}
                           >
-                            <span
-                              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] text-[12px] font-semibold ${option.toneClass}`}
+                            <button
+                              type="button"
+                              onClick={() => enterManageConfigure(channel.id)}
+                              className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-1 py-0 text-left"
                             >
-                              <ClawProviderLogo provider={channel.provider} className="h-6 w-6" />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[14px] font-semibold">
-                                {channel.label}
+                              <span
+                                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] text-[12px] font-semibold ${option.toneClass}`}
+                              >
+                                <ClawProviderLogo provider={channel.provider} className="h-6 w-6" />
                               </span>
-                              <span className="mt-0.5 block truncate text-[12px] text-ds-faint">
-                                {clawProviderDisplayLabel(channel.provider)} · {channel.model}
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[14px] font-semibold">
+                                  {channel.label}
+                                </span>
+                                <span className="mt-0.5 block truncate text-[12px] text-ds-faint">
+                                  {clawProviderDisplayLabel(channel.provider)} · {channel.model}
+                                </span>
+                                <span className="mt-1 block truncate text-[11.5px] text-ds-faint">
+                                  {channel.enabled ? t('clawImEnabled') : t('clawImDisabled')}
+                                </span>
                               </span>
-                              <span className="mt-1 block truncate text-[11.5px] text-ds-faint">
-                                {channel.enabled ? t('clawImEnabled') : t('clawImDisabled')}
-                              </span>
-                            </span>
-                            <ChevronRight className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.9} />
-                          </button>
+                              <ChevronRight className="h-4 w-4 shrink-0 text-ds-faint" strokeWidth={1.9} />
+                            </button>
+                            {typeof onDeleteChannel === 'function' ? (
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteChannel(channel)}
+                                disabled={busy}
+                                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-ds-faint transition hover:bg-red-500/10 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:text-red-300"
+                                title={t('clawDeleteIm')}
+                                aria-label={t('clawDeleteIm')}
+                              >
+                                <Trash2 className="h-4 w-4" strokeWidth={1.9} />
+                              </button>
+                            ) : null}
+                          </div>
                         )
                       })}
                     </div>
@@ -1294,7 +1351,18 @@ export function ClawAddImDialog({
                 total: CLAW_DIALOG_STEPS.length
               })} · ${t(activeStepConfig.descriptionKey)}`}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {!isManageSelection && mode === 'edit' && existingChannel && typeof onDeleteChannel === 'function' ? (
+              <button
+                type="button"
+                onClick={() => void handleDeleteChannel(existingChannel)}
+                disabled={busy}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-2 text-[13px] font-medium text-red-600 shadow-sm transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-300"
+              >
+                <Trash2 className="h-4 w-4" strokeWidth={1.9} />
+                {t('clawDeleteIm')}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={onClose}

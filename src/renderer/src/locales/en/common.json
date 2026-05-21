@@ -262,6 +262,8 @@
   "clawChannelEmpty": "No remote message yet. Open it to start the local conversation for this connection.",
   "clawChannelOpen": "Open",
   "clawClearSession": "Clear current conversation",
+  "clawDeleteIm": "Delete IM",
+  "clawDeleteImConfirm": "Delete IM \"{{name}}\" and its local conversation configuration? This cannot be undone.",
   "clawSessionCleared": "Claw session cleared.",
   "clawModelChanged": "Claw model switched to {{model}}.",
   "clawModelCurrent": "Current Claw model: `{{model}}`.",

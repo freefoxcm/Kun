@@ -35,6 +35,7 @@ export type ClawAddImDialogProps = {
       im?: Partial<ClawImSettingsV1>
     }
   ) => Promise<void>
+  onDeleteChannel?: (channelId: string) => Promise<void>
   t: (k: string, opts?: Record<string, unknown>) => string
 }
 

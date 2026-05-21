@@ -262,6 +262,8 @@
   "clawChannelEmpty": "还没有远端消息，打开后会先进入这个连接的本地对话。",
   "clawChannelOpen": "打开",
   "clawClearSession": "清空当前对话",
+  "clawDeleteIm": "删除 IM",
+  "clawDeleteImConfirm": "确定删除 IM「{{name}}」及其本地会话配置吗？此操作无法撤销。",
   "clawSessionCleared": "Claw 会话已清空。",
   "clawModelChanged": "Claw 模型已切换到 {{model}}。",
   "clawModelCurrent": "当前 Claw 模型是 `{{model}}`。",
