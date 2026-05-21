@@ -938,7 +938,7 @@ export class ClawRuntime {
   }
 
   private resolveFeishuChannels(settings: AppSettingsV1): ClawImChannelV1[] {
-    if (!settings.claw.enabled || !settings.claw.im.enabled) return []
+    if (!settings.claw.enabled) return []
     return settings.claw.channels.filter(
       (channel) =>
         channel.enabled &&
