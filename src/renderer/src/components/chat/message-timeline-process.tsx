@@ -141,7 +141,7 @@ export function ProcessSectionRow({
     sectionHasPendingApproval(section) ||
     (active && section.kind === 'reasoning') ||
     (processing && section.kind === 'execution' && sectionHasRequestUserInput(section))
-  const forceExpanded = hasError || sectionHasPendingApproval(section)
+  const forceExpanded = sectionHasPendingApproval(section)
   const expanded = hasDetails && (forceExpanded || (userExpanded ?? defaultExpanded))
   const title = describeProcessSection(section, t, {
     processing,
@@ -281,6 +281,7 @@ function ProcessStackRows({
 }): ReactElement {
   const { t } = useTranslation('common')
   const [openBlockId, setOpenBlockId] = useState<string | null>(null)
+  const [closedBlockIds, setClosedBlockIds] = useState<ReadonlySet<string>>(() => new Set())
 
   return (
     <div className="ds-work-stack">
@@ -292,13 +293,37 @@ function ProcessStackRows({
         const autoOpenRequestInput = processing && isRequestUserInputTool(block)
         const autoOpenPending = processBlockIsAutoOpenPending(block, processing) || isPendingApproval(block)
         const isError = processBlockHasError(block)
-        const forceOpen = isError || autoOpenPending || autoOpenRequestInput
-        const open = canExpand && (forceOpen || openBlockId === block.id)
+        const defaultOpen = isError
+        const forceOpen = autoOpenPending || autoOpenRequestInput
+        const userClosed = closedBlockIds.has(block.id)
+        const userOpened = openBlockId === block.id
+        const open = canExpand && (forceOpen || userOpened || (defaultOpen && !userClosed))
         const rowActive = processBlockIsActive(block, processing)
         const canToggle = canExpand && !forceOpen
         const handleToggle = (): void => {
           if (!canToggle) return
-          setOpenBlockId((id) => (id === block.id ? null : block.id))
+          if (open) {
+            setOpenBlockId((id) => (id === block.id ? null : id))
+            if (defaultOpen) {
+              setClosedBlockIds((ids) => {
+                const next = new Set(ids)
+                next.add(block.id)
+                return next
+              })
+            }
+            return
+          }
+          setClosedBlockIds((ids) => {
+            if (!ids.has(block.id)) return ids
+            const next = new Set(ids)
+            next.delete(block.id)
+            return next
+          })
+          setOpenBlockId(block.id)
+        }
+        const handleToggleButton = (event: ReactMouseEvent<HTMLButtonElement>): void => {
+          event.stopPropagation()
+          handleToggle()
         }
         const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
           if (!canToggle) return
@@ -312,6 +337,7 @@ function ProcessStackRows({
             <div
               role={canToggle ? 'button' : undefined}
               tabIndex={canToggle ? 0 : undefined}
+              aria-expanded={canToggle ? open : undefined}
               onClick={handleToggle}
               onKeyDown={handleKeyDown}
               className={`group flex w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left text-[13.5px] leading-6 transition ${
@@ -324,11 +350,22 @@ function ProcessStackRows({
                 <ProcessSummaryText block={block} summary={summary} />
               </span>
               {canExpand ? (
-                open ? (
-                  <ChevronDown className="h-3 w-3 shrink-0 opacity-35" strokeWidth={2} />
-                ) : (
-                  <ChevronRight className="h-3 w-3 shrink-0 opacity-0 transition group-hover:opacity-35" strokeWidth={2} />
-                )
+                <button
+                  type="button"
+                  aria-label={open ? t('processCollapseDetail') : t('processExpandDetail')}
+                  aria-expanded={open}
+                  disabled={!canToggle}
+                  onClick={handleToggleButton}
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition ${
+                    canToggle ? 'cursor-pointer hover:bg-ds-hover/70' : 'cursor-default'
+                  }`}
+                >
+                  {open ? (
+                    <ChevronDown className="h-3 w-3 opacity-45" strokeWidth={2} />
+                  ) : (
+                    <ChevronRight className="h-3 w-3 opacity-45" strokeWidth={2} />
+                  )}
+                </button>
               ) : null}
             </div>
             {open ? (
@@ -358,7 +395,7 @@ function ProcessEntryRow({
   processing: boolean
 }): ReactElement {
   const { t } = useTranslation('common')
-  const [userOpen, setUserOpen] = useState(false)
+  const [userOpen, setUserOpen] = useState<boolean | null>(null)
   const summary = describeProcessBlock(block, t)
   const detail = getProcessDetail(block, summary)
   const canExpand = detail.kind !== 'none'
@@ -367,17 +404,23 @@ function ProcessEntryRow({
   const isAutoOpenPending = processBlockIsAutoOpenPending(block, processing) || isPendingApproval(block)
   const isStreamingAssistant = processing && block.kind === 'assistant' && block.id === 'live-assistant'
   const isError = processBlockHasError(block)
+  const forceOpen = isAutoOpenPending || isAssistantProcessText || isStreamingAssistant
+  const defaultOpen = isError
   const open =
     canExpand &&
-    (isError || isAssistantProcessText || isAutoOpenPending || isStreamingAssistant || userOpen)
+    (forceOpen || (userOpen ?? defaultOpen))
 
   const { verb, rest } = splitVerb(summary)
   const rowActive = isRunningTool || isAutoOpenPending || isStreamingAssistant
   const wrapSummary = (block.kind === 'system' && !canExpand) || isAssistantProcessText
-  const canToggle = canExpand && !isAutoOpenPending && !isAssistantProcessText && !isError
+  const canToggle = canExpand && !forceOpen
   const handleToggle = (): void => {
     if (!canToggle) return
-    setUserOpen((v) => !v)
+    setUserOpen(!open)
+  }
+  const handleToggleButton = (event: ReactMouseEvent<HTMLButtonElement>): void => {
+    event.stopPropagation()
+    handleToggle()
   }
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (!canToggle) return
@@ -391,6 +434,7 @@ function ProcessEntryRow({
       <div
         role={canToggle ? 'button' : undefined}
         tabIndex={canToggle ? 0 : undefined}
+        aria-expanded={canToggle ? open : undefined}
         onClick={handleToggle}
         onKeyDown={handleKeyDown}
         className={`group flex w-full items-start gap-2 rounded-md px-2 py-1 text-left text-[13.5px] leading-[1.55] transition ${
@@ -423,11 +467,22 @@ function ProcessEntryRow({
           ) : null}
         </span>
         {canExpand ? (
-          open ? (
-            <ChevronDown className="mt-1 h-3 w-3 shrink-0 opacity-40" strokeWidth={2} />
-          ) : (
-            <ChevronRight className="mt-1 h-3 w-3 shrink-0 opacity-0 transition group-hover:opacity-45" strokeWidth={2} />
-          )
+          <button
+            type="button"
+            aria-label={open ? t('processCollapseDetail') : t('processExpandDetail')}
+            aria-expanded={open}
+            disabled={!canToggle}
+            onClick={handleToggleButton}
+            className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition ${
+              canToggle ? 'cursor-pointer hover:bg-ds-hover/70' : 'cursor-default'
+            }`}
+          >
+            {open ? (
+              <ChevronDown className="h-3 w-3 opacity-45" strokeWidth={2} />
+            ) : (
+              <ChevronRight className="h-3 w-3 opacity-45" strokeWidth={2} />
+            )}
+          </button>
         ) : null}
       </div>
       <RuntimeMetaBadges block={block} t={t} />

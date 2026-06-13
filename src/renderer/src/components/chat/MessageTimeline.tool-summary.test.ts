@@ -311,6 +311,28 @@ describe('MessageTimeline Kun runtime metadata smoke', () => {
     expect(html).toContain('ds-process-file-reference')
   })
 
+  it('shows failed tool details by default while keeping the row collapsible', () => {
+    const block: ChatBlock = toolBlock({
+      summary: 'Recognize image recognize_image',
+      status: 'error',
+      detail: 'model request failed with status 401',
+      meta: { toolName: 'recognize_image' }
+    })
+
+    const html = renderToStaticMarkup(
+      createElement(ProcessSectionRow, {
+        section: { id: 'execution-tool_error', kind: 'execution', blocks: [block] },
+        processing: false,
+        singleReasoningSection: false,
+        viewportRef: { current: null }
+      })
+    )
+
+    expect(html).toContain('Recognize image recognize_image')
+    expect(html).toContain('model request failed with status 401')
+    expect(html).toContain('role="button"')
+  })
+
   it('expands active reasoning so the current process is visible', () => {
     const block: ChatBlock = {
       kind: 'reasoning',

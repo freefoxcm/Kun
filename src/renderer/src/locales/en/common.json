@@ -50,6 +50,8 @@
   "loading": "Loading",
   "cancel": "Cancel",
   "confirm": "Confirm",
+  "processExpandDetail": "Expand details",
+  "processCollapseDetail": "Collapse details",
   "scheduleSubtitle": "Design scheduled tasks, or start them whenever you need.",
   "scheduleNewTask": "New task",
   "scheduleAwakeNotice": "Scheduled tasks only run while this computer is awake.",
