@@ -5,6 +5,7 @@ export { ImageGenerationSettingsSection } from './settings-section-image-generat
 export { MediaGenerationSettingsSection } from './settings-section-media-generation'
 export { SpeechToTextSettingsSection } from './settings-section-speech-to-text'
 export { AgentsSettingsSection } from './settings-section-agents'
+export { WorktreeSettingsSection } from './settings-section-worktree'
 export { ClawSettingsSection } from './settings-section-claw'
 export { KeyboardShortcutsSettingsSection } from './settings-section-shortcuts'
 export { EasterEggSettingsSection } from './settings-section-easter-egg'

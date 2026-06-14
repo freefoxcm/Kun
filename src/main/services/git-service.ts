@@ -19,14 +19,14 @@ const execFileAsync = promisify(execFile)
  * discovered repo root (or the original cwd if none was found) to git. This
  * is a defensive layer — when git itself works, the result is identical.
  */
-async function resolveGitCwd(workspaceRoot: string): Promise<string> {
+export async function resolveGitCwd(workspaceRoot: string): Promise<string> {
   const trimmed = workspaceRoot.trim()
   if (!trimmed) return trimmed
   const discovered = await findNearestGitRoot(trimmed)
   return discovered ?? trimmed
 }
 
-async function runGit(
+export async function runGit(
   cwd: string,
   args: string[],
   timeout = 10_000

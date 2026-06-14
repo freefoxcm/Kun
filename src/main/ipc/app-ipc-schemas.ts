@@ -712,6 +712,50 @@ export const gitBranchPayloadSchema = z
   })
   .strict()
 
+export const worktreeOptionalRootSchema = z.object({
+  projectPath: trimmedString(MAX_PATH_LENGTH),
+  poolIndex: z.number().int().min(0).max(2),
+  taskId: trimmedString(MAX_BRANCH_LENGTH),
+  force: z.boolean().optional(),
+  worktreeRoot: optionalTrimmedString(MAX_PATH_LENGTH)
+}).strict()
+
+export const worktreePoolSchema = z.object({
+  projectPath: trimmedString(MAX_PATH_LENGTH),
+  worktreeRoot: optionalTrimmedString(MAX_PATH_LENGTH)
+}).strict()
+
+export const worktreePoolIndexSchema = z.object({
+  projectPath: trimmedString(MAX_PATH_LENGTH),
+  poolIndex: z.number().int().min(0).max(2),
+  worktreeRoot: optionalTrimmedString(MAX_PATH_LENGTH)
+}).strict()
+
+export const worktreeMergeSchema = z.object({
+  projectPath: trimmedString(MAX_PATH_LENGTH),
+  poolIndex: z.number().int().min(0).max(2),
+  commitMessage: optionalTrimmedString(4_000),
+  worktreeRoot: optionalTrimmedString(MAX_PATH_LENGTH)
+}).strict()
+
+export const worktreePathSchema = z.object({
+  worktreePath: trimmedString(MAX_PATH_LENGTH)
+}).strict()
+
+export const worktreeProjectPathSchema = z.object({
+  projectPath: trimmedString(MAX_PATH_LENGTH)
+}).strict()
+
+export const worktreeContinueMergeSchema = z.object({
+  projectPath: trimmedString(MAX_PATH_LENGTH),
+  message: optionalTrimmedString(4_000)
+}).strict()
+
+export const worktreeCommitSchema = z.object({
+  worktreePath: trimmedString(MAX_PATH_LENGTH),
+  message: trimmedString(4_000)
+}).strict()
+
 export const openEditorPathPayloadSchema = z
   .object({
     path: trimmedString(MAX_PATH_LENGTH),

@@ -13,6 +13,13 @@ import type {
 import type { EditorListResult, EditorOpenResult, OpenEditorPathOptions } from './editor'
 import type { GitBranchesResult } from './git-branches'
 import type {
+  MergeResult,
+  SyncResult,
+  WorktreeChanges,
+  WorktreeInfo,
+  WorktreePoolStatus
+} from './worktree'
+import type {
   GuiUpdateChannel,
   GuiUpdateDownloadResult,
   GuiUpdateInfo,
@@ -231,6 +238,41 @@ export type KunGuiApi = {
   getGitBranches: (workspaceRoot: string) => Promise<GitBranchesResult>
   switchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
   createAndSwitchGitBranch: (workspaceRoot: string, branch: string) => Promise<GitBranchesResult>
+  acquireWorktree: (params: {
+    projectPath: string
+    poolIndex: number
+    taskId: string
+    force?: boolean
+    worktreeRoot?: string
+  }) => Promise<WorktreeInfo>
+  releaseWorktree: (params: { projectPath: string; poolIndex: number }) => Promise<void>
+  listWorktrees: (params: { projectPath: string; worktreeRoot?: string }) => Promise<WorktreePoolStatus>
+  removeWorktree: (params: {
+    projectPath: string
+    poolIndex: number
+    worktreeRoot?: string
+  }) => Promise<void>
+  getWorktreeChanges: (params: { worktreePath: string }) => Promise<WorktreeChanges>
+  commitWorktree: (params: { worktreePath: string; message: string }) => Promise<string>
+  mergeWorktree: (params: {
+    projectPath: string
+    poolIndex: number
+    commitMessage?: string
+    worktreeRoot?: string
+  }) => Promise<MergeResult>
+  abortWorktreeMerge: (params: { projectPath: string }) => Promise<void>
+  continueWorktreeMerge: (params: { projectPath: string; message?: string }) => Promise<MergeResult>
+  syncWorktreeFromMain: (params: {
+    projectPath: string
+    poolIndex: number
+    worktreeRoot?: string
+  }) => Promise<SyncResult>
+  abortWorktreeRebase: (params: { worktreePath: string }) => Promise<void>
+  cleanupWorktrees: (params: { projectPath: string; worktreeRoot?: string }) => Promise<void>
+  findAvailableWorktreePoolIndex: (params: {
+    projectPath: string
+    worktreeRoot?: string
+  }) => Promise<number | null>
   listEditors: () => Promise<EditorListResult>
   openEditorPath: (options: OpenEditorPathOptions) => Promise<EditorOpenResult>
   listWorkspaceDirectory: (options: WorkspaceDirectoryTarget) => Promise<WorkspaceDirectoryListResult>

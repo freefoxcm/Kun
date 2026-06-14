@@ -42,6 +42,14 @@ import {
   openEditorPathPayloadSchema,
   providerProbePayloadSchema,
   rootPathSchema,
+  worktreeCommitSchema,
+  worktreeContinueMergeSchema,
+  worktreeMergeSchema,
+  worktreePoolIndexSchema,
+  worktreePoolSchema,
+  worktreeProjectPathSchema,
+  worktreeOptionalRootSchema,
+  worktreePathSchema,
   runtimeRequestPayloadSchema,
   scheduleTaskFromTextPayloadSchema,
   shellOpenExternalUrlSchema,
@@ -74,6 +82,21 @@ import { probeModelProvider } from '../provider-connection'
 import type { ClawRuntime } from '../claw-runtime'
 import type { ScheduleRuntime } from '../schedule-runtime'
 import { createAndSwitchGitBranch, getGitBranches, switchGitBranch } from '../services/git-service'
+import {
+  abortMerge,
+  abortRebase,
+  acquireWorktree,
+  cleanupWorktrees,
+  commitWorktree,
+  continueMerge,
+  findAvailablePoolIndex,
+  getWorktreeChanges,
+  listWorktrees,
+  mergeWorktreeToMain,
+  releaseWorktree,
+  removeWorktree,
+  syncWorktreeFromMain
+} from '../services/worktree-service'
 import {
   installUiPluginFromDirectory,
   listUiPlugins,
@@ -769,6 +792,79 @@ export function registerAppIpcHandlers(options: RegisterAppIpcHandlersOptions): 
       return createAndSwitchGitBranch(request.workspaceRoot, request.branch)
     }
   )
+
+  // Worktree pool management
+  ipcMain.handle('worktree:acquire', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:acquire', worktreeOptionalRootSchema, payload)
+    return acquireWorktree({
+      projectPath: r.projectPath,
+      poolIndex: r.poolIndex,
+      taskId: r.taskId,
+      force: r.force,
+      worktreeRoot: r.worktreeRoot
+    })
+  })
+  ipcMain.handle('worktree:release', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:release', worktreePoolIndexSchema, payload)
+    return releaseWorktree({ projectPath: r.projectPath, poolIndex: r.poolIndex })
+  })
+  ipcMain.handle('worktree:list', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:list', worktreePoolSchema, payload)
+    return listWorktrees({ projectPath: r.projectPath, worktreeRoot: r.worktreeRoot })
+  })
+  ipcMain.handle('worktree:remove', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:remove', worktreePoolIndexSchema, payload)
+    return removeWorktree({
+      projectPath: r.projectPath,
+      poolIndex: r.poolIndex,
+      worktreeRoot: r.worktreeRoot
+    })
+  })
+  ipcMain.handle('worktree:changes', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:changes', worktreePathSchema, payload)
+    return getWorktreeChanges({ worktreePath: r.worktreePath })
+  })
+  ipcMain.handle('worktree:commit', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:commit', worktreeCommitSchema, payload)
+    return commitWorktree({ worktreePath: r.worktreePath, message: r.message })
+  })
+  ipcMain.handle('worktree:merge', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:merge', worktreeMergeSchema, payload)
+    return mergeWorktreeToMain({
+      projectPath: r.projectPath,
+      poolIndex: r.poolIndex,
+      commitMessage: r.commitMessage,
+      worktreeRoot: r.worktreeRoot
+    })
+  })
+  ipcMain.handle('worktree:abort-merge', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:abort-merge', worktreeProjectPathSchema, payload)
+    return abortMerge({ projectPath: r.projectPath })
+  })
+  ipcMain.handle('worktree:continue-merge', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:continue-merge', worktreeContinueMergeSchema, payload)
+    return continueMerge({ projectPath: r.projectPath, message: r.message })
+  })
+  ipcMain.handle('worktree:sync', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:sync', worktreePoolIndexSchema, payload)
+    return syncWorktreeFromMain({
+      projectPath: r.projectPath,
+      poolIndex: r.poolIndex,
+      worktreeRoot: r.worktreeRoot
+    })
+  })
+  ipcMain.handle('worktree:abort-rebase', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:abort-rebase', worktreePathSchema, payload)
+    return abortRebase({ worktreePath: r.worktreePath })
+  })
+  ipcMain.handle('worktree:cleanup', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:cleanup', worktreePoolSchema, payload)
+    return cleanupWorktrees({ projectPath: r.projectPath, worktreeRoot: r.worktreeRoot })
+  })
+  ipcMain.handle('worktree:find-available', async (_, payload: unknown) => {
+    const r = parseIpcPayload('worktree:find-available', worktreePoolSchema, payload)
+    return findAvailablePoolIndex({ projectPath: r.projectPath, worktreeRoot: r.worktreeRoot })
+  })
 
   ipcMain.handle('editor:list', async () => listEditorsResult())
   ipcMain.handle('editor:open-path', async (_, payload: unknown) =>

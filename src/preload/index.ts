@@ -55,6 +55,32 @@ const api = {
     ipcRenderer.invoke('git:switch-branch', { workspaceRoot, branch }),
   createAndSwitchGitBranch: (workspaceRoot, branch) =>
     ipcRenderer.invoke('git:create-and-switch-branch', { workspaceRoot, branch }),
+  acquireWorktree: (params) =>
+    ipcRenderer.invoke('worktree:acquire', params),
+  releaseWorktree: (params) =>
+    ipcRenderer.invoke('worktree:release', params),
+  listWorktrees: (params) =>
+    ipcRenderer.invoke('worktree:list', params),
+  removeWorktree: (params) =>
+    ipcRenderer.invoke('worktree:remove', params),
+  getWorktreeChanges: (params) =>
+    ipcRenderer.invoke('worktree:changes', params),
+  commitWorktree: (params) =>
+    ipcRenderer.invoke('worktree:commit', params),
+  mergeWorktree: (params) =>
+    ipcRenderer.invoke('worktree:merge', params),
+  abortWorktreeMerge: (params) =>
+    ipcRenderer.invoke('worktree:abort-merge', params),
+  continueWorktreeMerge: (params) =>
+    ipcRenderer.invoke('worktree:continue-merge', params),
+  syncWorktreeFromMain: (params) =>
+    ipcRenderer.invoke('worktree:sync', params),
+  abortWorktreeRebase: (params) =>
+    ipcRenderer.invoke('worktree:abort-rebase', params),
+  cleanupWorktrees: (params) =>
+    ipcRenderer.invoke('worktree:cleanup', params),
+  findAvailableWorktreePoolIndex: (params) =>
+    ipcRenderer.invoke('worktree:find-available', params),
   listEditors: () => ipcRenderer.invoke('editor:list'),
   openEditorPath: (options) =>
     ipcRenderer.invoke('editor:open-path', options),
