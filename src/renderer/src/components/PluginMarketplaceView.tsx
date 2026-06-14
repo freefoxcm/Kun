@@ -176,6 +176,19 @@ function mcpServersFromConfig(config: JsonRecord): JsonRecord {
   return isJsonRecord(mcp?.servers) ? mcp.servers : {}
 }
 
+function mcpServerConfigFromText(content: string, id: string): JsonRecord | undefined {
+  try {
+    const server = mcpServersFromConfig(parseMcpJsonConfig(content))[id]
+    return isJsonRecord(server) ? server : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function mcpServerEnabledFromConfig(config: JsonRecord | undefined): boolean {
+  return !(config?.enabled === false || config?.disabled === true)
+}
+
 function mcpServerDescription(server: JsonRecord | undefined, fallback: string): string {
   if (!server) return fallback
   const transport = typeof server.transport === 'string' ? server.transport : ''
@@ -259,6 +272,45 @@ export function mergeMcpJsonConfig(content: string, fragment: JsonRecord): { alr
     }
   }
   return { alreadyExists: false, text: `${JSON.stringify(next, null, 2)}\n` }
+}
+
+export function setMcpServerEnabled(content: string, id: string, enabled: boolean): string {
+  const current = parseMcpJsonConfig(content)
+  const updateServer = (servers: JsonRecord): JsonRecord => {
+    const rawServer = servers[id]
+    if (!isJsonRecord(rawServer)) {
+      throw new Error(`MCP server "${id}" does not exist.`)
+    }
+    return {
+      ...servers,
+      [id]: {
+        ...rawServer,
+        enabled,
+        ...(enabled ? { disabled: undefined } : {})
+      }
+    }
+  }
+
+  if (isJsonRecord(current.servers)) {
+    return `${JSON.stringify({ ...current, servers: updateServer(current.servers) }, null, 2)}\n`
+  }
+
+  const capabilities = isJsonRecord(current.capabilities) ? current.capabilities : undefined
+  const mcp = isJsonRecord(capabilities?.mcp) ? capabilities.mcp : undefined
+  if (isJsonRecord(mcp?.servers)) {
+    return `${JSON.stringify({
+      ...current,
+      capabilities: {
+        ...capabilities,
+        mcp: {
+          ...mcp,
+          servers: updateServer(mcp.servers)
+        }
+      }
+    }, null, 2)}\n`
+  }
+
+  throw new Error(`MCP server "${id}" does not exist.`)
 }
 
 function buildSkillContent(id: string, title: string, description: string, instructions: string): string {
@@ -480,6 +532,7 @@ export function PluginMarketplaceView(): ReactElement {
   const [toolDiagnostics, setToolDiagnostics] = useState<CoreRuntimeToolDiagnosticsJson | null>(null)
   const [runtimeOverlayLoading, setRuntimeOverlayLoading] = useState(false)
   const [runtimeOverlayError, setRuntimeOverlayError] = useState('')
+  const [mcpToggleBusyId, setMcpToggleBusyId] = useState<string | null>(null)
   const [discoveredSkills, setDiscoveredSkills] = useState<SkillListItem[]>([])
   const [skillListLoading, setSkillListLoading] = useState(false)
   const [skillListError, setSkillListError] = useState('')
@@ -850,6 +903,27 @@ export function PluginMarketplaceView(): ReactElement {
     }
   }
 
+  const toggleMcpEnabled = async (id: string, enabled: boolean): Promise<void> => {
+    setMcpToggleBusyId(id)
+    setNotice(null)
+    try {
+      const content = mcpLoaded ? mcpConfigText : await readMcpConfig()
+      const nextText = setMcpServerEnabled(content, id, enabled)
+      await window.kunGui.setKunConfigFile(nextText)
+      setMcpConfigText(nextText)
+      setMcpLoaded(true)
+      setNotice({
+        tone: 'success',
+        message: enabled ? t('pluginMcpEnabled') : t('pluginMcpDisabled')
+      })
+      await refreshMcpRuntimeOverlay()
+    } catch (error) {
+      setNotice({ tone: 'error', message: error instanceof Error ? error.message : String(error) })
+    } finally {
+      setMcpToggleBusyId(null)
+    }
+  }
+
   const openManageTarget = async (): Promise<void> => {
     try {
       if (activeKind === 'mcp') {
@@ -1018,6 +1092,9 @@ export function PluginMarketplaceView(): ReactElement {
             disabledSkillIds={disabledSkillIds}
             skillToggleBusyId={skillToggleBusyId}
             onToggleSkillEnabled={toggleSkillEnabled}
+            mcpConfigText={mcpConfigText}
+            mcpToggleBusyId={mcpToggleBusyId}
+            onToggleMcpEnabled={toggleMcpEnabled}
             t={t}
           />
         ) : null}
@@ -1032,6 +1109,9 @@ export function PluginMarketplaceView(): ReactElement {
           disabledSkillIds={disabledSkillIds}
           skillToggleBusyId={skillToggleBusyId}
           onToggleSkillEnabled={toggleSkillEnabled}
+          mcpConfigText={mcpConfigText}
+          mcpToggleBusyId={mcpToggleBusyId}
+          onToggleMcpEnabled={toggleMcpEnabled}
           t={t}
         />
 
@@ -1045,6 +1125,9 @@ export function PluginMarketplaceView(): ReactElement {
           disabledSkillIds={disabledSkillIds}
           skillToggleBusyId={skillToggleBusyId}
           onToggleSkillEnabled={toggleSkillEnabled}
+          mcpConfigText={mcpConfigText}
+          mcpToggleBusyId={mcpToggleBusyId}
+          onToggleMcpEnabled={toggleMcpEnabled}
           t={t}
         />
 
@@ -1197,6 +1280,9 @@ function PluginSection({
   disabledSkillIds = [],
   skillToggleBusyId = null,
   onToggleSkillEnabled,
+  mcpConfigText = '',
+  mcpToggleBusyId = null,
+  onToggleMcpEnabled,
   t
 }: {
   title: string
@@ -1208,6 +1294,9 @@ function PluginSection({
   disabledSkillIds?: string[]
   skillToggleBusyId?: string | null
   onToggleSkillEnabled?: (id: string, enabled: boolean) => Promise<void>
+  mcpConfigText?: string
+  mcpToggleBusyId?: string | null
+  onToggleMcpEnabled?: (id: string, enabled: boolean) => Promise<void>
   t: (key: string, values?: Record<string, unknown>) => string
 }): ReactElement {
   return (
@@ -1227,6 +1316,10 @@ function PluginSection({
             const skillDisabled = item.kind === 'skill' && disabledSkillIds.includes(normalizedSkillId)
             const canToggleSkill = item.kind === 'skill' && item.group === 'personal' && onToggleSkillEnabled
             const toggleBusy = skillToggleBusyId === normalizedSkillId
+            const mcpConfig = item.kind === 'mcp' ? mcpServerConfigFromText(mcpConfigText, item.id) : undefined
+            const mcpDisabled = item.kind === 'mcp' && !mcpServerEnabledFromConfig(mcpConfig)
+            const canToggleMcp = item.kind === 'mcp' && item.group === 'personal' && !!mcpConfig && onToggleMcpEnabled
+            const mcpBusy = mcpToggleBusyId === item.id
             return (
               <div
                 key={itemKey}
@@ -1247,6 +1340,11 @@ function PluginSection({
                     {skillDisabled ? (
                       <span className="shrink-0 rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-200">
                         {t('pluginSkillStatusDisabled')}
+                      </span>
+                    ) : null}
+                    {mcpDisabled ? (
+                      <span className="shrink-0 rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-200">
+                        {t('pluginMcpStatusDisabled')}
                       </span>
                     ) : null}
                   </div>
@@ -1277,6 +1375,26 @@ function PluginSection({
                       t('pluginSkillEnable')
                     ) : (
                       t('pluginSkillDisable')
+                    )}
+                  </button>
+                ) : canToggleMcp ? (
+                  <button
+                    type="button"
+                    disabled={mcpBusy}
+                    onClick={() => void onToggleMcpEnabled(item.id, mcpDisabled)}
+                    title={mcpDisabled ? t('pluginMcpEnable') : t('pluginMcpDisable')}
+                    className={`inline-flex h-9 shrink-0 items-center justify-center rounded-xl px-3 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                      mcpDisabled
+                        ? 'bg-ds-subtle text-ds-ink hover:bg-ds-hover'
+                        : 'bg-ds-subtle text-ds-muted hover:bg-ds-hover'
+                    }`}
+                  >
+                    {mcpBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+                    ) : mcpDisabled ? (
+                      t('pluginMcpEnable')
+                    ) : (
+                      t('pluginMcpDisable')
                     )}
                   </button>
                 ) : (

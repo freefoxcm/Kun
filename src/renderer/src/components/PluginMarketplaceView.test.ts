@@ -6,6 +6,7 @@ import {
   mcpMarketplaceItemsFromConfigAndDiagnostics,
   mergeMcpJsonConfig,
   recommendedMarketplaceItemIds,
+  setMcpServerEnabled,
   skillMarketplaceItemsFromDiscoveredSkills
 } from './PluginMarketplaceView'
 
@@ -171,6 +172,59 @@ describe('PluginMarketplaceView MCP config helpers', () => {
         detail: expect.stringContaining('github-mcp')
       })
     ])
+  })
+
+  it('toggles top-level MCP servers without dropping config fields', () => {
+    const disabled = setMcpServerEnabled(JSON.stringify({
+      timeouts: { read_timeout: 120 },
+      servers: {
+        docs: {
+          transport: 'stdio',
+          command: 'docs-mcp',
+          args: ['--stdio']
+        }
+      }
+    }), 'docs', false)
+    const disabledParsed = JSON.parse(disabled) as Record<string, any>
+
+    expect(disabledParsed.timeouts).toEqual({ read_timeout: 120 })
+    expect(disabledParsed.servers.docs).toMatchObject({
+      transport: 'stdio',
+      command: 'docs-mcp',
+      args: ['--stdio'],
+      enabled: false
+    })
+
+    const enabled = setMcpServerEnabled(disabled, 'docs', true)
+    const enabledParsed = JSON.parse(enabled) as Record<string, any>
+    expect(enabledParsed.servers.docs.enabled).toBe(true)
+    expect(enabledParsed.servers.docs.command).toBe('docs-mcp')
+  })
+
+  it('toggles nested Kun capability MCP servers', () => {
+    const text = setMcpServerEnabled(JSON.stringify({
+      capabilities: {
+        mcp: {
+          enabled: true,
+          servers: {
+            github: {
+              transport: 'stdio',
+              command: 'github-mcp',
+              disabled: true
+            }
+          }
+        }
+      }
+    }), 'github', true)
+    const parsed = JSON.parse(text) as Record<string, any>
+
+    expect(parsed.capabilities.mcp.enabled).toBe(true)
+    expect(parsed.capabilities.mcp.servers.github).toMatchObject({
+      transport: 'stdio',
+      command: 'github-mcp',
+      enabled: true
+    })
+    expect(parsed.capabilities.mcp.servers.github).not.toHaveProperty('disabled')
   })
 })
 
