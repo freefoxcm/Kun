@@ -33,12 +33,24 @@ describe('token economy', () => {
     expect(output).toContain('./src/App.tsx')
   })
 
-  it('compresses tool descriptions and long tool results only in the model request', () => {
+  it('compresses tool descriptions and current-turn tool results only in the model request', () => {
     const longOutput = Array.from({ length: 500 }, (_, index) =>
       index === 240 ? 'ERROR failed to compile auth middleware' : `noise line ${index}`
     ).join('\n')
-    const originalToolResult = makeToolResultItem({
-      id: 'item_result',
+    const previousToolResult = makeToolResultItem({
+      id: 'item_previous_result',
+      threadId: 'thr_1',
+      turnId: 'turn_previous',
+      callId: 'call_previous_bash',
+      toolName: 'bash',
+      output: {
+        command: 'npm test',
+        output: longOutput,
+        full_output_path: '/tmp/previous-full.log'
+      }
+    })
+    const currentToolResult = makeToolResultItem({
+      id: 'item_current_result',
       threadId: 'thr_1',
       turnId: 'turn_1',
       callId: 'call_bash',
@@ -67,28 +79,43 @@ describe('token economy', () => {
     ]
     original.history = [
       makeToolCallItem({
-        id: 'item_call',
+        id: 'item_previous_call',
+        threadId: 'thr_1',
+        turnId: 'turn_previous',
+        callId: 'call_previous_bash',
+        toolName: 'bash',
+        arguments: { command: 'npm test' }
+      }),
+      previousToolResult,
+      makeToolCallItem({
+        id: 'item_current_call',
         threadId: 'thr_1',
         turnId: 'turn_1',
         callId: 'call_bash',
         toolName: 'bash',
         arguments: { command: 'npm test' }
       }),
-      originalToolResult
+      currentToolResult
     ]
 
     const compacted = applyTokenEconomyToRequest(original, { enabled: true })
-    const result = compacted.history.find((item) => item.kind === 'tool_result')
-    const originalOutput = originalToolResult.kind === 'tool_result'
-      ? originalToolResult.output
+    const previousResult = compacted.history.find((item) =>
+      item.kind === 'tool_result' && item.callId === 'call_previous_bash')
+    const currentResult = compacted.history.find((item) =>
+      item.kind === 'tool_result' && item.callId === 'call_bash')
+    const currentOutput = currentToolResult.kind === 'tool_result'
+      ? currentToolResult.output
       : {}
 
     expect(compacted.contextInstructions).toContain(TOKEN_ECONOMY_INSTRUCTION)
     expect(compacted.tools[0]?.description).not.toContain('Please')
     expect(JSON.stringify(compacted.tools[0]?.inputSchema)).not.toContain('The path')
-    expect(result?.kind === 'tool_result' ? JSON.stringify(result.output).length : 0)
-      .toBeLessThan(JSON.stringify(originalOutput).length)
-    expect(JSON.stringify(originalOutput)).toContain('noise line 499')
+    expect(previousResult).toBe(previousToolResult)
+    expect(previousResult?.kind === 'tool_result' ? JSON.stringify(previousResult.output) : '')
+      .toContain('noise line 499')
+    expect(currentResult?.kind === 'tool_result' ? JSON.stringify(currentResult.output).length : 0)
+      .toBeLessThan(JSON.stringify(currentOutput).length)
+    expect(JSON.stringify(currentOutput)).toContain('noise line 499')
   })
 
   it('returns the original request when disabled', () => {

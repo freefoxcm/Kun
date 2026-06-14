@@ -154,4 +154,39 @@ describe('request history hygiene', () => {
       mime: 'image/png'
     })
   })
+
+  it('leaves previous-turn history untouched when scoped to the current turn', () => {
+    const previousResult = makeToolResultItem({
+      id: 'previous_image_result',
+      threadId: 'thr_1',
+      turnId: 'turn_previous',
+      callId: 'call_previous_read',
+      toolName: 'read',
+      output: { data_base64: 'a'.repeat(2_000), mime: 'image/png' }
+    })
+    const currentResult = makeToolResultItem({
+      id: 'current_image_result',
+      threadId: 'thr_1',
+      turnId: 'turn_current',
+      callId: 'call_current_read',
+      toolName: 'read',
+      output: { data_base64: 'b'.repeat(2_000), mime: 'image/png' }
+    })
+
+    const compacted = applyRequestHistoryHygiene([previousResult, currentResult], {}, {
+      currentTurnId: 'turn_current'
+    })
+    const compactedPrevious = compacted[0]
+    const compactedCurrent = compacted[1]
+
+    expect(compactedPrevious).toBe(previousResult)
+    expect(compactedPrevious?.kind === 'tool_result' ? compactedPrevious.output : {}).toMatchObject({
+      data_base64: 'a'.repeat(2_000),
+      mime: 'image/png'
+    })
+    expect(compactedCurrent?.kind === 'tool_result' ? compactedCurrent.output : {}).toMatchObject({
+      data_base64: expect.stringContaining('omitted base64 data'),
+      mime: 'image/png'
+    })
+  })
 })

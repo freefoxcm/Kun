@@ -24,6 +24,10 @@ export type RequestHistoryHygieneOptions = {
   keepRecentToolResults?: number
 }
 
+export type RequestHistoryHygieneScope = {
+  currentTurnId?: string
+}
+
 const DEFAULT_MAX_TOOL_RESULT_LINES = 320
 const DEFAULT_MAX_TOOL_RESULT_BYTES = 32 * 1024
 const DEFAULT_MAX_TOOL_RESULT_TOKENS = 8_000
@@ -59,16 +63,21 @@ type CompactResult<T> = {
  */
 export function applyRequestHistoryHygiene(
   items: TurnItem[],
-  options: RequestHistoryHygieneOptions = {}
+  options: RequestHistoryHygieneOptions = {},
+  scope: RequestHistoryHygieneScope = {}
 ): TurnItem[] {
   const limits = normalizeOptions(options)
   const pairedToolCallIds = new Set(
     items
-      .filter((item) => item.kind === 'tool_result')
-      .map((item) => item.callId)
+      .flatMap((item) =>
+        shouldCleanItem(item, scope) && item.kind === 'tool_result'
+          ? [item.callId]
+          : []
+      )
   )
   let changed = false
   const next = items.map((item) => {
+    if (!shouldCleanItem(item, scope)) return item
     if (item.kind === 'tool_result') {
       const output = compactToolResultOutput(item.output, limits)
       if (!output.changed) return item
@@ -88,9 +97,13 @@ export function applyRequestHistoryHygiene(
     }
     return item
   })
-  const budgeted = applyCumulativeToolResultBudget(next, limits)
+  const budgeted = applyCumulativeToolResultBudget(next, limits, scope)
   if (budgeted !== next) changed = true
   return changed ? budgeted : items
+}
+
+function shouldCleanItem(item: TurnItem, scope: RequestHistoryHygieneScope): boolean {
+  return !scope.currentTurnId || item.turnId === scope.currentTurnId
 }
 
 /**
@@ -103,14 +116,17 @@ export function applyRequestHistoryHygiene(
  */
 function applyCumulativeToolResultBudget(
   items: TurnItem[],
-  limits: Required<RequestHistoryHygieneOptions>
+  limits: Required<RequestHistoryHygieneOptions>,
+  scope: RequestHistoryHygieneScope
 ): TurnItem[] {
   const budget = limits.maxCumulativeToolResultTokens
   if (budget <= 0) return items
 
   const toolResultIndexes: number[] = []
   for (let index = 0; index < items.length; index += 1) {
-    if (items[index].kind === 'tool_result') toolResultIndexes.push(index)
+    const item = items[index]
+    if (!item) continue
+    if (shouldCleanItem(item, scope) && item.kind === 'tool_result') toolResultIndexes.push(index)
   }
   if (toolResultIndexes.length === 0) return items
 

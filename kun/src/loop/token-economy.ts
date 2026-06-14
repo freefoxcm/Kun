@@ -96,7 +96,7 @@ export function applyTokenEconomyToRequest(
       ? request.tools.map(compactToolSpec)
       : request.tools,
     history: economy.compressToolResults
-      ? request.history.map(compactHistoryItem)
+      ? request.history.map((item) => item.turnId === request.turnId ? compactHistoryItem(item) : item)
       : request.history
   }
 }
