@@ -73,7 +73,8 @@ export function defaultClawSettings(): ClawSettingsV1 {
       providerId: '',
       model: DEFAULT_CLAW_MODEL,
       mode: 'agent',
-      responseTimeoutMs: 120_000
+      responseTimeoutMs: 120_000,
+      feishuStream: true
     },
     channels: [],
     tasks: []
