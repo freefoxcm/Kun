@@ -581,3 +581,7 @@ export async function readRequestBody(req: IncomingMessage): Promise<string> {
   }
   return Buffer.concat(chunks).toString('utf8')
 }
+
+export type SseSubscriber = (signal: AbortSignal) => { close: () => void }
+
+export type RuntimeSseEvent = { kind: string; turnId?: string; item?: { text?: unknown }; seq?: number; [key: string]: unknown }
