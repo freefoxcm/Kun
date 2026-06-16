@@ -80,6 +80,8 @@
   "clawRunModeDesc": "Default handling mode for phone messages and scheduled tasks.",
   "clawFeishuStream": "Enable streaming output",
   "clawFeishuStreamDesc": "Stream the reply character-by-character in a live SDK card, instead of sending a one-shot message after the run completes.",
+  "clawWeixinStream": "Enable block streaming output (WeChat)",
+  "clawWeixinStreamDesc": "Send the reply as multiple short messages instead of one long message",
   "clawModeAgent": "Act directly",
   "clawModePlan": "Plan",
   "clawModel": "Model",

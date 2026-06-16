@@ -8,7 +8,8 @@ import {
   defaultModelProviderSettings,
   defaultScheduleSettings,
   defaultWriteSettings,
-  type AppSettingsV1
+  type AppSettingsV1,
+  type ClawImChannelV1
 } from '@shared/app-settings'
 import { ClawSettingsSection } from './settings-section-claw'
 
@@ -40,7 +41,11 @@ const labels: Record<string, string> = {
   clawManageAgentUserContext: 'User context',
   clawManageAgentUserContextPlaceholder: 'User context placeholder',
   clawManageAgentReplyRules: 'Reply rules',
-  clawManageAgentReplyRulesPlaceholder: 'Reply rules placeholder'
+  clawManageAgentReplyRulesPlaceholder: 'Reply rules placeholder',
+  clawFeishuStream: 'Enable streaming output',
+  clawFeishuStreamDesc: 'Enable streaming output',
+  clawWeixinStream: 'Enable block streaming output (WeChat)',
+  clawWeixinStreamDesc: 'Send the reply as multiple short messages instead of one long message'
 }
 
 function t(key: string, values?: Record<string, unknown>): string {
@@ -51,7 +56,30 @@ function t(key: string, values?: Record<string, unknown>): string {
   return label
 }
 
-function buildSettings(): AppSettingsV1 {
+function buildChannel(provider: ClawImChannelV1['provider']): ClawImChannelV1 {
+  return {
+    id: 'channel_1',
+    provider,
+    label: 'Team helper',
+    enabled: true,
+    model: 'auto',
+    threadId: 'thr_1',
+    workspaceRoot: '',
+    agentProfile: {
+      name: 'Team helper',
+      description: 'Handles team chat requests',
+      identity: 'You are the project assistant.',
+      personality: 'Concise and practical.',
+      userContext: 'The user coordinates product and engineering.',
+      replyRules: 'Start with the conclusion.'
+    },
+    conversations: [],
+    createdAt: '2026-06-03T00:00:00.000Z',
+    updatedAt: '2026-06-03T00:00:00.000Z'
+  }
+}
+
+function buildSettings(provider: ClawImChannelV1['provider'] = 'feishu'): AppSettingsV1 {
   const settings: AppSettingsV1 = {
     version: 1,
     locale: 'en',
@@ -78,28 +106,7 @@ function buildSettings(): AppSettingsV1 {
     models: ['team-chat-model'],
     modelProfiles: {}
   }]
-  settings.claw.channels = [
-    {
-      id: 'channel_1',
-      provider: 'feishu',
-      label: 'Team helper',
-      enabled: true,
-      model: 'team-chat-model',
-      threadId: 'thr_1',
-      workspaceRoot: '',
-      agentProfile: {
-        name: 'Team helper',
-        description: 'Handles team chat requests',
-        identity: 'You are the project assistant.',
-        personality: 'Concise and practical.',
-        userContext: 'The user coordinates product and engineering.',
-        replyRules: 'Start with the conclusion.'
-      },
-      conversations: [],
-      createdAt: '2026-06-03T00:00:00.000Z',
-      updatedAt: '2026-06-03T00:00:00.000Z'
-    }
-  ]
+  settings.claw.channels = [buildChannel(provider)]
   return settings
 }
 
@@ -128,5 +135,69 @@ describe('ClawSettingsSection', () => {
     expect(html).toContain('Start with the conclusion.')
     expect(html).toContain('<option value="team-chat-model"')
     expect(html).not.toContain('<option value="deepseek-v4-pro"')
+  })
+
+  it('renders weixinStream SettingRow for weixin channel and hides feishuStream', () => {
+    const html = renderToStaticMarkup(
+      createElement(ClawSettingsSection, {
+        ctx: {
+          t,
+          form: buildSettings('weixin'),
+          update: vi.fn(),
+          selectControlClass: 'select-control',
+          pickClawWorkspace: async () => undefined,
+          resetClawWorkspaceToDefault: () => undefined,
+          clawWorkspacePickerError: null
+        }
+      })
+    )
+
+    expect(html).toContain('Enable block streaming output (WeChat)')
+    expect(html).toContain('Send the reply as multiple short messages instead of one long message')
+    expect(html).not.toContain('Enable streaming output')
+  })
+
+  it('renders feishuStream SettingRow for feishu channel and hides weixinStream', () => {
+    const html = renderToStaticMarkup(
+      createElement(ClawSettingsSection, {
+        ctx: {
+          t,
+          form: buildSettings('feishu'),
+          update: vi.fn(),
+          selectControlClass: 'select-control',
+          pickClawWorkspace: async () => undefined,
+          resetClawWorkspaceToDefault: () => undefined,
+          clawWorkspacePickerError: null
+        }
+      })
+    )
+
+    expect(html).toContain('Enable streaming output')
+    expect(html).not.toContain('Enable block streaming output (WeChat)')
+  })
+
+  it('reflects weixinStream=true channel state in the rendered toggle markup', () => {
+    const form = buildSettings('weixin')
+    form.claw.channels[0] = { ...form.claw.channels[0], weixinStream: true }
+    const html = renderToStaticMarkup(
+      createElement(ClawSettingsSection, {
+        ctx: {
+          t,
+          form,
+          update: vi.fn(),
+          selectControlClass: 'select-control',
+          pickClawWorkspace: async () => undefined,
+          resetClawWorkspaceToDefault: () => undefined,
+          clawWorkspacePickerError: null
+        }
+      })
+    )
+
+    // The weixinStream toggle is checked (aria-checked="true") next to the
+    // "Enabled" inline state label, while the default-off weixin channel
+    // would render aria-checked="false" with "Disabled".
+    const toggleMatches = html.match(/role="switch"[^>]*aria-checked="true"/g) ?? []
+    expect(toggleMatches.length).toBeGreaterThan(0)
+    expect(html).toContain('Enabled')
   })
 })
