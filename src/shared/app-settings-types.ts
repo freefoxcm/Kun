@@ -594,6 +594,8 @@ export type ClawImChannelV1 = {
   updatedAt: string
   /** 当 provider === 'feishu' 时,是否把 agent 回复改为流式输出。默认 false (per-channel)。 */
   feishuStream?: boolean
+  /** 当 provider === 'weixin' 时,是否把 agent 回复改为 block streaming。默认 true。 */
+  weixinStream?: boolean
 }
 
 export type ClawSettingsV1 = {
