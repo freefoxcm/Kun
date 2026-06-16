@@ -591,7 +591,8 @@ const clawImChannelPatchSchema = z.object({
   welcomeSentAt: z.string().max(128).optional(),
   createdAt: z.string().max(128).optional(),
   updatedAt: z.string().max(128).optional(),
-  feishuStream: z.boolean().optional()
+  feishuStream: z.boolean().optional(),
+  weixinStream: z.boolean().optional()
 }).strict()
 
 const clawTaskSchedulePatchSchema = z.object({
