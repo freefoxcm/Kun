@@ -168,33 +168,29 @@ export function ClawSettingsSection({ ctx }: { ctx: ClawSettingsContext }): Reac
                       })}
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="text-[12px] font-medium text-ds-muted">
-                      {channel.enabled ? t('clawManageAgentEnabled') : t('clawManageAgentDisabled')}
-                    </span>
-                    <Toggle
-                      checked={channel.enabled}
-                      onChange={(value) => updateChannel(form, update, channel.id, { enabled: value })}
-                    />
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[12px] font-medium text-ds-muted">
+                        {channel.enabled ? t('clawManageAgentEnabled') : t('clawManageAgentDisabled')}
+                      </span>
+                      <Toggle
+                        checked={channel.enabled}
+                        onChange={(value) => updateChannel(form, update, channel.id, { enabled: value })}
+                      />
+                    </div>
+                    {channel.provider === 'feishu' && (
+                      <div className="flex items-center gap-2" title={t('clawFeishuStreamDesc')}>
+                        <span className="text-[12px] font-medium text-ds-muted">
+                          {t('clawFeishuStream')}
+                        </span>
+                        <Toggle
+                          checked={channel.feishuStream === true}
+                          onChange={(value) => updateChannel(form, update, channel.id, { feishuStream: value })}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
-
-                {channel.provider === 'feishu' && (
-                  <div className="mt-3 flex items-center justify-between gap-3 rounded-[10px] border border-ds-border bg-ds-main/35 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-semibold text-ds-ink">
-                        {t('clawFeishuStream')}
-                      </div>
-                      <div className="mt-0.5 text-[12px] leading-5 text-ds-faint">
-                        {t('clawFeishuStreamDesc')}
-                      </div>
-                    </div>
-                    <Toggle
-                      checked={channel.feishuStream === true}
-                      onChange={(value) => updateChannel(form, update, channel.id, { feishuStream: value })}
-                    />
-                  </div>
-                )}
 
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   <label className="block min-w-0">
