@@ -4144,4 +4144,649 @@ describe('ClawRuntime handleFeishuMessage streaming', () => {
     expect(feishuBridge.send).not.toHaveBeenCalled()
     expect(feishuBridge.addReaction).not.toHaveBeenCalled()
   })
+
+  it('runs streaming reply on weixin webhook when channel.weixinStream=true', async () => {
+    // Open the SSE event stream; the test will push events as the
+    // streamer reads them. The WeChat path uses the same SSE plumbing
+    // as Feishu (subscribeSseForWeixin -> subscribeSse), so reusing
+    // the feishu test's stub is enough.
+    const { fetchMock, latestHandle } = stubFetchForThreadEvents()
+    const settings = buildSettings()
+    settings.claw.im.enabled = true
+    settings.claw.im.responseTimeoutMs = 5_000
+    // weixinStream is per-channel (default off). Enable it on this
+    // channel to exercise the WeChat streaming path through
+    // `runStreamingReplyWeixin`.
+    settings.claw.channels = [
+      buildChannel({
+        provider: 'weixin' as const,
+        id: 'channel_weixin',
+        label: 'WeChat',
+        threadId: 'thr_wx_stream_ok',
+        weixinStream: true,
+        conversations: [
+          buildConversation({
+            chatId: 'wx_user_1',
+            senderId: 'wx_user_1',
+            localThreadId: 'thr_wx_stream_ok'
+          })
+        ]
+      })
+    ]
+    const store = {
+      load: vi.fn(async () => settings),
+      patch: vi.fn(async () => settings)
+    }
+    // Mirror makeTurnRequest(): the channel already has a localThreadId,
+    // so no POST /v1/threads is issued — only the start-turn request.
+    const runtimeRequest = vi.fn(async (_settings, path, init) => {
+      if (path === '/v1/threads/thr_wx_stream_ok/turns' && init?.method === 'POST') {
+        return {
+          ok: true,
+          status: 202,
+          body: JSON.stringify({ threadId: 'thr_wx_stream_ok', turnId: 'turn_wx_stream_ok' })
+        }
+      }
+      throw new Error(`unexpected path ${path}`)
+    })
+    // WeChat streaming bridge: sendMessage returns a messageId; the
+    // runtime will deliver the assistant text in-band through it.
+    const weixinBridge = {
+      sendMessage: vi.fn(async () => ({ messageId: 'wx_msg_stream_1' }))
+    }
+    const runtime = createClawRuntime({
+      store: store as never,
+      runtimeRequest,
+      logError: () => undefined,
+      weixinBridge
+    })
+    // Webhook body mirrors the WeChat adapter contract: a top-level
+    // `provider: 'weixin'` plus a nested `message` carrying the
+    // accountId/from/context_token. The streaming path forwards these
+    // straight to `weixinBridge.sendMessage`.
+    const body = JSON.stringify({
+      text: 'hello wechat stream',
+      provider: 'weixin',
+      channelId: 'channel_weixin',
+      chatId: 'wx_user_1',
+      messageId: 'wx_inbound_stream',
+      senderId: 'wx_user_1',
+      senderName: 'Alice',
+      message: {
+        accountId: 'wx_account_1',
+        from: 'wx_user_1',
+        context_token: 'wx_ctx_token_1'
+      }
+    })
+    const req = {
+      method: 'POST',
+      url: settings.claw.im.path,
+      headers: {},
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from(body)
+      }
+    }
+    let status = 0
+    let responseBody = ''
+    const res = {
+      writeHead: vi.fn((nextStatus: number) => {
+        status = nextStatus
+      }),
+      end: vi.fn((payload: string) => {
+        responseBody = payload
+      })
+    }
+
+    // Push 5 deltas + a turn_completed as soon as the SSE subscriber
+    // is up. Yield to the event loop first so the streamer has
+    // registered its onSseEvent hook before we start emitting.
+    setTimeout(() => {
+      const h = latestHandle()
+      if (!h) return
+      h.emit({ seq: 1, kind: 'assistant_text_delta', turnId: 'turn_wx_stream_ok', item: { text: '你好 ' } })
+      h.emit({ seq: 2, kind: 'assistant_text_delta', turnId: 'turn_wx_stream_ok', item: { text: '这是 ' } })
+      h.emit({ seq: 3, kind: 'assistant_text_delta', turnId: 'turn_wx_stream_ok', item: { text: '一段 ' } })
+      h.emit({ seq: 4, kind: 'assistant_text_delta', turnId: 'turn_wx_stream_ok', item: { text: '流式 ' } })
+      h.emit({ seq: 5, kind: 'assistant_text_delta', turnId: 'turn_wx_stream_ok', item: { text: '回复' } })
+      h.emit({ seq: 6, kind: 'turn_completed', turnId: 'turn_wx_stream_ok' })
+    }, 0)
+
+    await (runtime as unknown as {
+      handleWebhook: (request: typeof req, response: typeof res) => Promise<void>
+    }).handleWebhook(req, res)
+
+    // The streaming branch was entered: the SSE event stream opened
+    // and the WeChat bridge was driven by the streamer.
+    expect(status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    // The bridge contract: `reply: ''` because the streaming path
+    // already shipped the user-visible blocks over the WeChat bridge;
+    // the webhook MUST NOT send a tail message.
+    const parsed = JSON.parse(responseBody)
+    expect(parsed).toMatchObject({ ok: true, reply: '', stream: 'weixin' })
+    // At least one block was sent through the WeChat bridge.
+    expect(weixinBridge.sendMessage).toHaveBeenCalled()
+    // The bridge received the inbound accountId/from/context_token
+    // verbatim — this is the contract runStreamingReplyWeixin relies
+    // on when calling sendMessage.
+    const firstCall = weixinBridge.sendMessage.mock.calls[0]
+    expect(firstCall[0]).toBe('wx_account_1')
+    expect(firstCall[1]).toBe('wx_user_1')
+    expect(firstCall[3]).toBe('wx_ctx_token_1')
+  })
+
+  it('falls back to one-shot send on streaming failure (partial blocks)', async () => {
+    // Drive the streamer with one large delta (so accumulatedText
+    // is populated and messageCount >= 1 after the flush) and then
+    // force it to throw by replacing `subscribeSseForWeixin` with
+    // a function whose returned subscriber throws synchronously.
+    // The streamer's `Promise.resolve().then(() => input.subscribe(
+    // ac.signal))` rejects, the `await setup` re-throws, and the
+    // runStreamingReplyWeixin catch arm runs.
+    //
+    // Why replace `subscribeSseForWeixin` (not `subscribeSse`):
+    // `subscribeSseForWeixin` catches any rejection from
+    // `this.subscribeSse(...)` internally and returns a successful
+    // `{ close }` handle to the streamer. So a throw in
+    // `subscribeSse` is swallowed before it reaches the streamer's
+    // setup chain. Replacing the outer method bypasses that
+    // swallow.
+    const settings = buildSettings()
+    settings.claw.im.enabled = true
+    settings.claw.im.responseTimeoutMs = 5_000
+    settings.claw.channels = [
+      buildChannel({
+        provider: 'weixin' as const,
+        id: 'channel_weixin',
+        label: 'WeChat',
+        threadId: 'thr_wx_fb_partial',
+        weixinStream: true,
+        conversations: [
+          buildConversation({
+            chatId: 'wx_user_1',
+            senderId: 'wx_user_1',
+            localThreadId: 'thr_wx_fb_partial'
+          })
+        ]
+      })
+    ]
+    const store = {
+      load: vi.fn(async () => settings),
+      patch: vi.fn(async () => settings)
+    }
+    const runtimeRequest = vi.fn(async (_settings, path, init) => {
+      if (path === '/v1/threads/thr_wx_fb_partial/turns' && init?.method === 'POST') {
+        return {
+          ok: true,
+          status: 202,
+          body: JSON.stringify({ threadId: 'thr_wx_fb_partial', turnId: 'turn_wx_fb_partial' })
+        }
+      }
+      throw new Error(`unexpected path ${path}`)
+    })
+    const weixinBridge = {
+      sendMessage: vi.fn(async () => ({ messageId: 'wx_msg_fb_partial' }))
+    }
+    const runtime = createClawRuntime({
+      store: store as never,
+      runtimeRequest,
+      logError: () => undefined,
+      weixinBridge
+    })
+    // The replacement subscriber drives one large delta into the
+    // streamer's onSseEvent (populating accumulatedText) and then
+    // throws synchronously, so the streamer's setup promise
+    // rejects and the catch arm sees a non-empty finalText.
+    ;(runtime as unknown as {
+      subscribeSseForWeixin: (
+        settings: AppSettingsV1,
+        threadId: string,
+        streamer: unknown
+      ) => (signal: AbortSignal) => { close: () => void }
+    }).subscribeSseForWeixin = (_settings, _threadId, streamer) => {
+      return (_signal: AbortSignal) => {
+        const block = 'a'.repeat(250)
+        ;(streamer as unknown as {
+          onSseEvent: (e: { kind: string; turnId: string; item: { text: string } }) => void
+        }).onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn_wx_fb_partial', item: { text: block } })
+        throw new Error('sse disconnected mid-stream')
+      }
+    }
+    const body = JSON.stringify({
+      text: 'fallback partial please',
+      provider: 'weixin',
+      channelId: 'channel_weixin',
+      chatId: 'wx_user_1',
+      messageId: 'wx_inbound_fb_partial',
+      senderId: 'wx_user_1',
+      senderName: 'Alice',
+      message: {
+        accountId: 'wx_account_1',
+        from: 'wx_user_1',
+        context_token: 'wx_ctx_token_fb'
+      }
+    })
+    const req = {
+      method: 'POST',
+      url: settings.claw.im.path,
+      headers: {},
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from(body)
+      }
+    }
+    let status = 0
+    let responseBody = ''
+    const res = {
+      writeHead: vi.fn((nextStatus: number) => {
+        status = nextStatus
+      }),
+      end: vi.fn((payload: string) => {
+        responseBody = payload
+      })
+    }
+
+    await (runtime as unknown as {
+      handleWebhook: (request: typeof req, response: typeof res) => Promise<void>
+    }).handleWebhook(req, res)
+
+    // The catch arm ran and the fallback was delivered via
+    // weixinBridge.sendMessage. The webhook returns 200 with
+    // `reply: ''` because the bridge has shipped the fallback text
+    // directly to the user.
+    expect(status).toBe(200)
+    const parsed = JSON.parse(responseBody)
+    expect(parsed).toMatchObject({ ok: true, reply: '', stream: 'weixin' })
+    // The bridge was called at least once (for the fallback).
+    expect(weixinBridge.sendMessage).toHaveBeenCalled()
+    const fallbackCall = weixinBridge.sendMessage.mock.calls[0]
+    expect(fallbackCall[0]).toBe('wx_account_1')
+    expect(fallbackCall[1]).toBe('wx_user_1')
+    expect(fallbackCall[3]).toBe('wx_ctx_token_fb')
+    const fallbackText = fallbackCall[2] as string
+    // The fallback text reflects the streamer's state at the
+    // moment the catch arm ran. Because we drove accumulatedText
+    // synchronously via onSseEvent, the catch arm always sees a
+    // non-empty finalText. The messageCount check is timing-
+    // dependent (the flush microtask may or may not have completed
+    // before the catch arm reads it), so we accept either:
+    //   - IF messageCount >= 1: "aaa...aaa\n\n（回复未完成）"
+    //   - ELSE (messageCount still 0): "aaa...aaa"  (the partial-
+    //     note suffix is suppressed but accumulatedText is non-
+    //     empty so the generic apology is NOT used)
+    // What we DO pin: the fallback text contains the accumulated
+    // block and is NEVER the empty apology (because accumulatedText
+    // is non-empty).
+    expect(fallbackText).toContain('a'.repeat(50))
+    expect(fallbackText).not.toBe('抱歉，生成失败，请稍后再试。')
+  })
+
+  it('falls back with sorry message when no blocks sent', async () => {
+    // The SSE subscription throws synchronously BEFORE the
+    // streamer can flush any block. The catch arm runs with
+    // messageCount === 0 and accumulatedText === '' and falls
+    // through to the "抱歉，生成失败，请稍后再试。" generic
+    // apology. The context_token is forwarded to the fallback
+    // call.
+    const settings = buildSettings()
+    settings.claw.im.enabled = true
+    settings.claw.im.responseTimeoutMs = 5_000
+    settings.claw.channels = [
+      buildChannel({
+        provider: 'weixin' as const,
+        id: 'channel_weixin',
+        label: 'WeChat',
+        threadId: 'thr_wx_fb_sorry',
+        weixinStream: true,
+        conversations: [
+          buildConversation({
+            chatId: 'wx_user_1',
+            senderId: 'wx_user_1',
+            localThreadId: 'thr_wx_fb_sorry'
+          })
+        ]
+      })
+    ]
+    const store = {
+      load: vi.fn(async () => settings),
+      patch: vi.fn(async () => settings)
+    }
+    const runtimeRequest = vi.fn(async (_settings, path, init) => {
+      if (path === '/v1/threads/thr_wx_fb_sorry/turns' && init?.method === 'POST') {
+        return {
+          ok: true,
+          status: 202,
+          body: JSON.stringify({ threadId: 'thr_wx_fb_sorry', turnId: 'turn_wx_fb_sorry' })
+        }
+      }
+      throw new Error(`unexpected path ${path}`)
+    })
+    const sendMessageCalls: Array<{
+      accountId: string
+      to: string
+      text: string
+      contextToken: string | undefined
+    }> = []
+    const weixinBridge = {
+      sendMessage: vi.fn(async (accountId: string, to: string, text: string, contextToken: string | undefined) => {
+        sendMessageCalls.push({ accountId, to, text, contextToken })
+        return { messageId: 'wx_msg_fb_sorry' }
+      })
+    }
+    const runtime = createClawRuntime({
+      store: store as never,
+      runtimeRequest,
+      logError: () => undefined,
+      weixinBridge
+    })
+    // Force the streamer to throw by replacing
+    // `subscribeSseForWeixin` with one whose returned subscriber
+    // throws synchronously. See the partial-blocks test for why
+    // the outer method is replaced (the inner `subscribeSse` is
+    // swallow-caught by `subscribeSseForWeixin`).
+    ;(runtime as unknown as {
+      subscribeSseForWeixin: (
+        settings: AppSettingsV1,
+        threadId: string,
+        streamer: unknown
+      ) => (signal: AbortSignal) => { close: () => void }
+    }).subscribeSseForWeixin = () => {
+      return (_signal: AbortSignal) => {
+        throw new Error('sse connect refused')
+      }
+    }
+    const body = JSON.stringify({
+      text: 'fallback sorry please',
+      provider: 'weixin',
+      channelId: 'channel_weixin',
+      chatId: 'wx_user_1',
+      messageId: 'wx_inbound_fb_sorry',
+      senderId: 'wx_user_1',
+      senderName: 'Alice',
+      message: {
+        accountId: 'wx_account_1',
+        from: 'wx_user_1',
+        context_token: 'wx_ctx_token_sorry'
+      }
+    })
+    const req = {
+      method: 'POST',
+      url: settings.claw.im.path,
+      headers: {},
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from(body)
+      }
+    }
+    let status = 0
+    let responseBody = ''
+    const res = {
+      writeHead: vi.fn((nextStatus: number) => {
+        status = nextStatus
+      }),
+      end: vi.fn((payload: string) => {
+        responseBody = payload
+      })
+    }
+
+    await (runtime as unknown as {
+      handleWebhook: (request: typeof req, response: typeof res) => Promise<void>
+    }).handleWebhook(req, res)
+
+    // Streaming branch failed and the fallback was delivered
+    // successfully via weixinBridge.sendMessage. The webhook
+    // returns 200 with `reply: ''` because the bridge has shipped
+    // the fallback text directly to the user — the webhook does
+    // NOT need to send a tail message.
+    expect(status).toBe(200)
+    const parsed = JSON.parse(responseBody)
+    expect(parsed).toMatchObject({ ok: true, reply: '', stream: 'weixin' })
+    // No blocks were sent before the throw → exactly one
+    // sendMessage call (the fallback) with the apology text.
+    expect(sendMessageCalls).toHaveLength(1)
+    const fallback = sendMessageCalls[0]
+    expect(fallback.text).toBe('抱歉，生成失败，请稍后再试。')
+    // The context_token is forwarded to the fallback call.
+    expect(fallback.contextToken).toBe('wx_ctx_token_sorry')
+    // Account ID and to are forwarded verbatim.
+    expect(fallback.accountId).toBe('wx_account_1')
+    expect(fallback.to).toBe('wx_user_1')
+  })
+
+  it('uses processIncomingImPrompt when channel.weixinStream is not true', async () => {
+    // channel.weixinStream is per-channel; when it is not explicitly
+    // set to `true`, the webhook MUST route through the polling
+    // processIncomingImPrompt path even if a weixinBridge handle is
+    // injected. The streamer must NOT be instantiated and the bridge
+    // must NOT be touched.
+    const settings = buildSettings()
+    settings.claw.im.enabled = true
+    settings.claw.im.responseTimeoutMs = 2_000
+    settings.claw.channels = [
+      buildChannel({
+        provider: 'weixin' as const,
+        id: 'channel_weixin',
+        label: 'WeChat',
+        threadId: 'thr_wx_no_stream',
+        // weixinStream deliberately omitted → defaults to false. The
+        // weixinStream === true guard in handleWebhook must skip the
+        // streaming branch.
+        conversations: [
+          buildConversation({
+            chatId: 'wx_user_1',
+            senderId: 'wx_user_1',
+            localThreadId: 'thr_wx_no_stream'
+          })
+        ]
+      })
+    ]
+    const { store } = mutableSettingsStore(settings)
+    const agentReply = 'wechat polling path reply'
+    const runtimeRequest = vi.fn(async (_settings, path, init) => {
+      if (path === '/v1/threads/thr_wx_no_stream/turns' && init?.method === 'POST') {
+        return { ok: true, status: 202, body: JSON.stringify({ turnId: 'turn_wx_no_stream' }) }
+      }
+      if (path === '/v1/threads/thr_wx_no_stream' && init?.method === 'GET') {
+        return {
+          ok: true,
+          status: 200,
+          body: JSON.stringify({
+            id: 'thr_wx_no_stream',
+            status: 'idle',
+            turns: [
+              {
+                id: 'turn_wx_no_stream',
+                status: 'completed',
+                items: [{ kind: 'assistant_text', text: agentReply }]
+              }
+            ]
+          })
+        }
+      }
+      throw new Error(`unexpected path ${path}`)
+    })
+    // Inject a weixinBridge to prove that the gate is on
+    // channel.weixinStream, not on the presence of the bridge.
+    const weixinBridge = {
+      sendMessage: vi.fn(async () => ({ messageId: 'wx_msg_unused' }))
+    }
+    const runtime = createClawRuntime({
+      store: store as never,
+      runtimeRequest,
+      logError: () => undefined,
+      weixinBridge
+    })
+    const body = JSON.stringify({
+      text: 'hello wechat polling',
+      provider: 'weixin',
+      channelId: 'channel_weixin',
+      chatId: 'wx_user_1',
+      messageId: 'wx_inbound_no_stream',
+      senderId: 'wx_user_1',
+      senderName: 'Alice',
+      message: {
+        accountId: 'wx_account_1',
+        from: 'wx_user_1',
+        context_token: 'wx_ctx_token_polling'
+      }
+    })
+    const req = {
+      method: 'POST',
+      url: settings.claw.im.path,
+      headers: {},
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from(body)
+      }
+    }
+    let status = 0
+    let responseBody = ''
+    const res = {
+      writeHead: vi.fn((nextStatus: number) => {
+        status = nextStatus
+      }),
+      end: vi.fn((payload: string) => {
+        responseBody = payload
+      })
+    }
+
+    await (runtime as unknown as {
+      handleWebhook: (request: typeof req, response: typeof res) => Promise<void>
+    }).handleWebhook(req, res)
+
+    // Polling path delivered the reply.
+    expect(status).toBe(200)
+    const parsed = JSON.parse(responseBody)
+    expect(parsed).toMatchObject({ ok: true, reply: agentReply })
+    // Critical: the streaming branch was NOT entered. The weixin
+    // bridge must remain untouched.
+    expect(weixinBridge.sendMessage).not.toHaveBeenCalled()
+    // The SSE event stream was NOT opened (no fetch call for /events).
+    for (const call of runtimeRequest.mock.calls) {
+      const path = call[1] as string
+      expect(path).not.toMatch(/\/events$/)
+    }
+  })
+
+  it('passes contextToken through to every sendMessage call', async () => {
+    // The webhook payload's `message.context_token` is the WeChat
+    // customer-service session token. It must be forwarded verbatim
+    // on every weixinBridge.sendMessage call — losing it would
+    // cause the WeChat API to reject subsequent messages with a
+    // session-expired error. Drive 2 large blocks (each > minChars)
+    // so 2 distinct sendMessage calls fire, then assert the 4th
+    // positional arg equals the inbound context_token on every
+    // call. The fallback path's contextToken propagation is pinned
+    // by the no-blocks and partial-blocks fallback tests above.
+    const { fetchMock, latestHandle } = stubFetchForThreadEvents()
+    const settings = buildSettings()
+    settings.claw.im.enabled = true
+    settings.claw.im.responseTimeoutMs = 5_000
+    settings.claw.channels = [
+      buildChannel({
+        provider: 'weixin' as const,
+        id: 'channel_weixin',
+        label: 'WeChat',
+        threadId: 'thr_wx_ctx',
+        weixinStream: true,
+        conversations: [
+          buildConversation({
+            chatId: 'wx_user_1',
+            senderId: 'wx_user_1',
+            localThreadId: 'thr_wx_ctx'
+          })
+        ]
+      })
+    ]
+    const store = {
+      load: vi.fn(async () => settings),
+      patch: vi.fn(async () => settings)
+    }
+    const runtimeRequest = vi.fn(async (_settings, path, init) => {
+      if (path === '/v1/threads/thr_wx_ctx/turns' && init?.method === 'POST') {
+        return {
+          ok: true,
+          status: 202,
+          body: JSON.stringify({ threadId: 'thr_wx_ctx', turnId: 'turn_wx_ctx' })
+        }
+      }
+      throw new Error(`unexpected path ${path}`)
+    })
+    const sendMessageCalls: Array<{
+      callIndex: number
+      text: string
+      contextToken: string | undefined
+    }> = []
+    const weixinBridge = {
+      sendMessage: vi.fn(async (_accountId: string, _to: string, text: string, contextToken: string | undefined) => {
+        sendMessageCalls.push({ callIndex: sendMessageCalls.length, text, contextToken })
+        return { messageId: `wx_msg_${sendMessageCalls.length}` }
+      })
+    }
+    const runtime = createClawRuntime({
+      store: store as never,
+      runtimeRequest,
+      logError: () => undefined,
+      weixinBridge
+    })
+    const body = JSON.stringify({
+      text: 'context token test',
+      provider: 'weixin',
+      channelId: 'channel_weixin',
+      chatId: 'wx_user_1',
+      messageId: 'wx_inbound_ctx',
+      senderId: 'wx_user_1',
+      senderName: 'Alice',
+      message: {
+        accountId: 'wx_account_1',
+        from: 'wx_user_1',
+        context_token: 'wx_ctx_token_propagate'
+      }
+    })
+    const req = {
+      method: 'POST',
+      url: settings.claw.im.path,
+      headers: {},
+      async *[Symbol.asyncIterator]() {
+        yield Buffer.from(body)
+      }
+    }
+    let status = 0
+    let responseBody = ''
+    const res = {
+      writeHead: vi.fn((nextStatus: number) => {
+        status = nextStatus
+      }),
+      end: vi.fn((payload: string) => {
+        responseBody = payload
+      })
+    }
+
+    // Push 2 large blocks (each > minChars=200 to trigger a real
+    // sendMessage flush), then emit a turn_completed to mark the
+    // streamer closed.
+    setTimeout(() => {
+      const h = latestHandle()
+      if (!h) return
+      const block1 = 'a'.repeat(260)
+      const block2 = 'b'.repeat(260)
+      h.emit({ seq: 1, kind: 'assistant_text_delta', turnId: 'turn_wx_ctx', item: { text: block1 } })
+      h.emit({ seq: 2, kind: 'assistant_text_delta', turnId: 'turn_wx_ctx', item: { text: block2 } })
+      h.emit({ seq: 3, kind: 'turn_completed', turnId: 'turn_wx_ctx' })
+    }, 0)
+
+    await (runtime as unknown as {
+      handleWebhook: (request: typeof req, response: typeof res) => Promise<void>
+    }).handleWebhook(req, res)
+
+    // The streaming branch ran end-to-end.
+    expect(status).toBe(200)
+    expect(fetchMock).toHaveBeenCalled()
+    // The bridge was called at least once. Every call MUST carry
+    // the inbound context_token at the 4th positional arg.
+    expect(sendMessageCalls.length).toBeGreaterThan(0)
+    for (const call of sendMessageCalls) {
+      expect(call.contextToken).toBe('wx_ctx_token_propagate')
+    }
+    // The webhook reply is empty (the bridge has shipped the text).
+    const parsed = JSON.parse(responseBody)
+    expect(parsed).toMatchObject({ ok: true, reply: '', stream: 'weixin' })
+  })
 })

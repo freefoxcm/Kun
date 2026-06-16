@@ -32,6 +32,27 @@ export type ClawRuntimeDeps = {
     to: string
     text: string
   }) => Promise<{ ok: true; messageId: string } | { ok: false; message: string }>
+  /**
+   * Bridge handle used by the WeChat streaming reply path
+   * (`runStreamingReplyWeixin`). Mirrors the feishu bridge surface:
+   * it must return a `messageId` so the streamer can flush in-band
+   * updates. When omitted, the webhook falls back to the polling
+   * path even if the channel has `weixinStream === true`.
+   *
+   * Kept separate from `sendWeixinBridgeMessage` (which returns a
+   * discriminated result and is the API used by the polling path /
+   * mirror / command reply) so the streaming path can use the
+   * `contextToken` argument that the API helper currently does not
+   * accept.
+   */
+  weixinBridge?: {
+    sendMessage: (
+      accountId: string,
+      to: string,
+      text: string,
+      contextToken: string | undefined
+    ) => Promise<{ messageId: string }>
+  }
   /** WeChat owner (`ilink_user_id`) for a bridge account; '' when unknown. */
   resolveWeixinAccountUserId?: (accountId: string) => Promise<string>
   createScheduledTaskFromText?: (

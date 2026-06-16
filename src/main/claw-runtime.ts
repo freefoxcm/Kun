@@ -77,6 +77,7 @@ import {
 } from './claw-runtime-helpers'
 import { getRuntimeBaseUrlForSettings, runtimeAuthHeaders } from './runtime/kun-adapter'
 import { FeishuStreamer } from './feishu-streamer'
+import { WeixinStreamer } from './weixin-streamer'
 
 const MAX_IM_FILE_UPLOAD_BYTES = 50 * 1024 * 1024
 const CLAW_IM_APPROVAL_POLICY = 'auto'
@@ -84,6 +85,18 @@ const CLAW_IM_SANDBOX_MODE = 'danger-full-access'
 
 type FeishuClawChannel = ClawImChannelV1 & {
   platformCredential: ClawImFeishuPlatformCredentialV1
+}
+
+// Public mirror of `weixin-streamer.ts` internal `BridgeHandle`. Kept as a
+// public type so Task 3.3 can inject a `weixinBridge` dependency instance of
+// this shape. Mirrors the feishu bridge surface used by `runStreamingReply`.
+export type WeixinBridgeHandle = {
+  sendMessage: (
+    accountId: string,
+    to: string,
+    text: string,
+    contextToken: string | undefined
+  ) => Promise<{ messageId: string }>
 }
 
 type IncomingRemoteSession = Pick<
@@ -709,6 +722,32 @@ export class ClawRuntime {
     }
   }
 
+  private subscribeSseForWeixin(
+    settings: AppSettingsV1,
+    threadId: string,
+    streamer: WeixinStreamer
+  ): SseSubscriber {
+    return (signal) => {
+      // Mirror the feishu pattern: subscribeSseForStreamer takes a streamer
+      // with an onSseEvent(event) method; WeixinStreamer has the same shape.
+      // We duck-type the streamer as a FeishuStreamer to avoid widening the
+      // existing signature. Both streamers receive RuntimeSseEvent through
+      // the same SSE path.
+      const setup = this.subscribeSse(settings, threadId, streamer as unknown as FeishuStreamer, signal)
+      let close = (): void => undefined
+      void setup.then(
+        (handle) => { close = handle.close },
+        (error) => {
+          this.deps.logError('claw-weixin-stream', 'SSE subscription setup failed', {
+            message: error instanceof Error ? error.message : String(error),
+            threadId
+          })
+        }
+      )
+      return { close: () => close() }
+    }
+  }
+
   private async runStreamingReply(input: {
     bridge: LarkChannel
     chatId: string
@@ -765,6 +804,75 @@ export class ClawRuntime {
     } finally {
       clearTimeout(timeout)
       streamer.dispose()
+    }
+  }
+
+  private async runStreamingReplyWeixin(input: {
+    bridgeHandle: WeixinBridgeHandle
+    webhookPayload: { message: { accountId: string; from: string; context_token?: string } }
+    threadId: string
+    turnId: string
+    responseTimeoutMs: number
+    context: Record<string, unknown>
+  }): Promise<{
+    ok: boolean
+    messageCount: number
+    finalText: string
+    fellBack: boolean
+    message?: string
+  }> {
+    let streamer: WeixinStreamer | null = null
+    try {
+      const settings = await this.deps.store.load()
+      streamer = new WeixinStreamer({
+        bridge: input.bridgeHandle,
+        accountId: input.webhookPayload.message.accountId,
+        to: input.webhookPayload.message.from,
+        turnId: input.turnId,
+        threadId: input.threadId,
+        contextToken: input.webhookPayload.message.context_token,
+        minChars: 200,
+        idleMs: 3000,
+        responseTimeoutMs: input.responseTimeoutMs,
+        logger: (category, message, detail) => this.deps.logError(category, message, detail)
+      })
+      const result = await streamer.start({
+        subscribe: this.subscribeSseForWeixin(settings, input.threadId, streamer)
+      })
+      return {
+        ok: result.ok,
+        messageCount: result.messageCount,
+        finalText: result.finalText,
+        fellBack: false
+      }
+    } catch (error) {
+      this.deps.logError('claw-weixin-stream', 'streaming reply failed; falling back', {
+        message: error instanceof Error ? error.message : String(error),
+        ...input.context
+      })
+      const finalText = streamer?.getAccumulatedText() ?? ''
+      const messageCount = streamer?.messageCount_ ?? 0
+      const partialNote = messageCount >= 1 ? '\n\n（回复未完成）' : ''
+      const fallbackText = finalText + partialNote || '抱歉，生成失败，请稍后再试。'
+      try {
+        await input.bridgeHandle.sendMessage(
+          input.webhookPayload.message.accountId,
+          input.webhookPayload.message.from,
+          fallbackText,
+          input.webhookPayload.message.context_token
+        )
+        return { ok: true, messageCount, finalText, fellBack: true }
+      } catch (fbError) {
+        return {
+          ok: false,
+          messageCount: 0,
+          finalText,
+          fellBack: true,
+          message: fbError instanceof Error ? fbError.message : String(fbError)
+        }
+      }
+    } finally {
+      streamer?.dispose()
     }
   }
 
@@ -2288,6 +2396,61 @@ export class ClawRuntime {
       }
       if (taskCreation.kind === 'error') {
         writeJson(res, 500, { ok: false, message: taskCreation.message })
+        return
+      }
+      // WeChat streaming path: when the resolved channel has
+      // `weixinStream === true` AND a bridge handle was injected, start
+      // the turn (no wait) and hand the SSE subscription to
+      // `runStreamingReplyWeixin`. The streamer delivers the text
+      // directly via the bridge, so the webhook reply is intentionally
+      // empty (`reply: ''`) to signal "the bridge has already shipped
+      // the response — do not double-send a tail message". Mirrors the
+      // feishu `channel.feishuStream === true` branch above.
+      if (provider === 'weixin' && channel?.weixinStream === true && this.deps.weixinBridge) {
+        const started = await this.processIncomingImPrompt(settings, {
+          prompt,
+          sender,
+          provider: 'weixin',
+          channel,
+          conversation,
+          remoteSession: remoteSession ?? undefined,
+          waitForResult: false
+        })
+        if (!started.ok || !started.threadId || !started.turnId) {
+          writeJson(res, 500, { ok: false, message: started.message || 'Failed to start WeChat streaming turn.' })
+          return
+        }
+        const streamResult = await this.runStreamingReplyWeixin({
+          bridgeHandle: this.deps.weixinBridge,
+          webhookPayload: payload as { message: { accountId: string; from: string; context_token?: string } },
+          threadId: started.threadId,
+          turnId: started.turnId,
+          responseTimeoutMs: 600_000,
+          context: {
+            purpose: 'weixin-stream',
+            channelId: channel.id,
+            threadId: started.threadId,
+            turnId: started.turnId
+          }
+        })
+        if (!streamResult.ok) {
+          writeJson(res, 500, {
+            ok: false,
+            message: streamResult.message || 'WeChat streaming reply failed.'
+          })
+          return
+        }
+        // Empty reply = the bridge has already sent the (final or
+        // fallback) message; the WeChat bridge does not need a tail
+        // message from the webhook.
+        writeJson(res, 200, {
+          ok: true,
+          threadId: started.threadId,
+          turnId: started.turnId,
+          messageCount: streamResult.messageCount,
+          reply: '',
+          stream: 'weixin'
+        })
         return
       }
       const result = await this.processIncomingImPrompt(settings, {

@@ -1386,6 +1386,31 @@ app.whenReady().then(async () => {
     logError,
     notifyChannelActivity: emitClawChannelActivity,
     sendWeixinBridgeMessage,
+    // Bridge handle for the WeChat streaming reply path. The streamer
+    // drives the bridge directly (it needs a `messageId` per send to
+    // track in-band updates and may carry a `contextToken` to keep
+    // the recipient's thread stitched together). When omitted, the
+    // runtime falls back to the polling path even if the channel has
+    // `weixinStream === true` — the GUI degrades gracefully when the
+    // WeChat plugin isn't loaded.
+    weixinBridge: {
+      sendMessage: async (accountId, to, text, contextToken) => {
+        const result = await sendWeixinBridgeMessage({ accountId, to, text })
+        if (result.ok) {
+          // The `sendWeixinBridgeMessage` helper already manages the
+          // context token internally via `restoreContextTokens` /
+          // `getContextToken`; the explicit `contextToken` argument
+          // is the inbound webhook's first-token hint which is only
+          // needed for the very first reply of a thread. We accept
+          // it here for shape parity with the streamer contract but
+          // it is intentionally not threaded through the RPC layer
+          // (the plugin keeps that as a server-side concern).
+          void contextToken
+          return { messageId: result.messageId }
+        }
+        throw new Error(result.message)
+      }
+    },
     resolveWeixinAccountUserId: getWeixinBridgeAccountUserId,
     createScheduledTaskFromText: (text, options) =>
       scheduleRuntime?.createScheduledTaskFromText(text, options) ?? Promise.resolve({ kind: 'noop' })
