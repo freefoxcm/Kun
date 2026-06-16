@@ -179,6 +179,23 @@ export function ClawSettingsSection({ ctx }: { ctx: ClawSettingsContext }): Reac
                   </div>
                 </div>
 
+                {channel.provider !== 'weixin' && (
+                  <div className="mt-3 flex items-center justify-between gap-3 rounded-[10px] border border-ds-border bg-ds-main/35 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-semibold text-ds-ink">
+                        {t('clawFeishuStream')}
+                      </div>
+                      <div className="mt-0.5 text-[12px] leading-5 text-ds-faint">
+                        {t('clawFeishuStreamDesc')}
+                      </div>
+                    </div>
+                    <Toggle
+                      checked={channel.feishuStream === true}
+                      onChange={(value) => updateChannel(form, update, channel.id, { feishuStream: value })}
+                    />
+                  </div>
+                )}
+
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   <label className="block min-w-0">
                     <span className="mb-1.5 block text-[12px] font-semibold text-ds-muted">
