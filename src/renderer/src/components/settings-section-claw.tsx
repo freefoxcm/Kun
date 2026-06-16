@@ -157,27 +157,27 @@ export function ClawSettingsSection({ ctx }: { ctx: ClawSettingsContext }): Reac
             const name = channel.agentProfile.name.trim() || channel.label
             return (
               <div key={channel.id} className="px-3 py-4">
-                <div className="px-0 pb-3">
-                  <div className="truncate text-[14px] font-semibold text-ds-ink">{name}</div>
-                  <div className="mt-1 text-[12px] text-ds-faint">
-                    {t('clawManageAgentMeta', {
-                      provider: 'Feishu / Lark',
-                      model: channel.model,
-                      workspace: channelEffectiveWorkspace(form, channel)
-                    })}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="truncate text-[14px] font-semibold text-ds-ink">{name}</div>
+                    <div className="mt-1 text-[12px] text-ds-faint">
+                      {t('clawManageAgentMeta', {
+                        provider: 'Feishu / Lark',
+                        model: channel.model,
+                        workspace: channelEffectiveWorkspace(form, channel)
+                      })}
+                    </div>
                   </div>
-                </div>
-
-                <SettingRow
-                  title={channel.enabled ? t('clawManageAgentEnabled') : t('clawManageAgentDisabled')}
-                  description={t('clawEnabledDesc')}
-                  control={
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-[12px] font-medium text-ds-muted">
+                      {channel.enabled ? t('clawManageAgentEnabled') : t('clawManageAgentDisabled')}
+                    </span>
                     <Toggle
                       checked={channel.enabled}
                       onChange={(value) => updateChannel(form, update, channel.id, { enabled: value })}
                     />
-                  }
-                />
+                  </div>
+                </div>
 
                 {channel.provider === 'feishu' && (
                   <SettingRow
