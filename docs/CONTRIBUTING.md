@@ -251,3 +251,17 @@ npm run build:kun
 # Electron 手动启动 + 真飞书账号(本机 + 测试机器人 appId/secret)
 npm run dev
 ```
+
+## 微信 block streaming smoke 测试
+
+- [ ] 单条短回答（<200 字符）：单条气泡直接发；不切块
+- [ ] 单条长回答（500-1000 字符）：分 3-5 条 block 气泡陆续到达
+- [ ] 超长回答（5000+ 字符）：≥25 条 block 气泡
+- [ ] 故意 SSE 断开：fallback 补一条 "未完成"
+- [ ] 故意 `turn_failed`：fallback 补一条 "抱歉，生成失败"
+- [ ] `channel.weixinStream=false`（默认）：走原单条消息路径（不切块）
+- [ ] `channel.weixinStream=true`：走流式路径，发多条 block 气泡
+- [ ] **Connect phone 视图实时性**：bot 收到消息后 chat 视图立即出现 streaming 文本（不卡）
+- [ ] **附件**：流式结束后图片 / 文件作为独立消息正常发出
+- [ ] **会话连续性**：`contextToken` 正确带，微信客户端识别为同一对话
+- [ ] **降级路径**：bridge 未启动时，webhook 返回 `{ reply: finalText }`，bridge 自动 fallback 到单条消息发送
