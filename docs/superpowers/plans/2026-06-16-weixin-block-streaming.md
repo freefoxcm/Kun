@@ -34,19 +34,21 @@
 |---|---|---|
 | `src/main/weixin-streamer.ts` | `WeixinStreamer` 类，封装一次 block streaming 回复生命周期 | 新增 |
 | `src/main/weixin-streamer.test.ts` | `WeixinStreamer` 单测（13 个 case） | 新增 |
-| `src/main/claw-runtime.ts` | `runStreamingReplyWeixin` / `subscribeSseForWeixin` 私有方法；`handleWebhook` 加 `weixinStream` 分支 | 修改 |
+| `src/main/claw-runtime.ts` | `runStreamingReplyWeixin` / `subscribeSseForWeixin` 私有方法；`handleWebhook` 加 `weixinStream` 分支（参考飞书 `handleFeishuMessage` 在 line 1825 的 `channel.feishuStream === true` 模式） | 修改 |
 | `src/main/claw-runtime.test.ts` | 集成测试（5-6 个 case） | 修改 |
-| `src/shared/app-settings-types.ts` | `ClawImSettingsV1` 加 `weixinStream?` | 修改（+1 字段） |
-| `src/shared/app-settings-claw.ts` | default normalizer 补 `weixinStream: true` | 修改（+1 行） |
-| `src/main/settings-store.ts` | migration 加 `claw.im.weixinStream ?? true` | 修改（+1 行） |
-| `src/shared/app-settings.test.ts` | migration 测试 | 修改（+1 case） |
-| `src/renderer/src/components/settings-section-claw.tsx` | `weixinStream` SettingRow（紧邻 `feishuStream`） | 修改（+1 行 row） |
+| `src/shared/app-settings-types.ts` | `ClawImChannelV1` 加 `weixinStream?`（紧邻 `feishuStream?` line 596） | 修改（+1 字段） |
+| `src/shared/app-settings-claw.ts` | 通道 mapper 补 `weixinStream: normalizeBoolean(raw.weixinStream, false)`（紧邻 `feishuStream` 默认值 line 159-162） | 修改（+1 行） |
+| `src/main/ipc/app-ipc-schemas.ts` | `clawImChannelPatchSchema` 加 `weixinStream: z.boolean().optional()`（line 586 紧邻 `feishuStream`） | 修改（+1 行） |
+| `src/shared/app-settings.test.ts` | normalizer 测试（默认 false + 显式 true 保留） | 修改（+2 case） |
+| `src/renderer/src/components/settings-section-claw.tsx` | `weixinStream` SettingRow（紧邻 `feishuStream` row line 182-200，gate `channel.provider === 'weixin'`） | 修改（+1 row） |
 | `src/renderer/src/components/settings-section-claw.test.ts` | `weixinStream` toggle 单测 | 修改（+1 case） |
-| `src/renderer/src/locales/en/common.json` | i18n key `claw.weixinStreamLabel` | 修改（+1 entry） |
-| `src/renderer/src/locales/zh/common.json` | i18n key `claw.weixinStreamLabel` | 修改（+1 entry） |
-| `src/renderer/src/locales/en/settings.json` | i18n key `claw.weixinStreamInlineState` | 修改（+1 entry） |
-| `src/renderer/src/locales/zh/settings.json` | i18n key `claw.weixinStreamInlineState` | 修改（+1 entry） |
+| `src/renderer/src/locales/en/settings.json` | i18n keys（`clawWeixinStream` + `clawWeixinStreamDesc` 紧邻 `clawFeishuStream` line 66-67） | 修改（+2 entry） |
+| `src/renderer/src/locales/zh/settings.json` | i18n keys（`clawWeixinStream` + `clawWeixinStreamDesc` 紧邻 `clawFeishuStream` line 66-67） | 修改（+2 entry） |
 | `docs/CONTRIBUTING.md` | 末尾加"微信 block streaming smoke 测试"小节 | 修改（追加） |
+
+**注意：以下原计划假设已废弃（per-channel 重构后）**：
+- ❌ `src/main/settings-store.ts` 加 migration：与 `feishuStream` 一致，不写 migration（旧全局字段被静默丢弃）
+- ❌ `src/renderer/src/locales/{en,zh}/common.json`：feishuStream i18n keys 实际在 `settings.json`（line 66-67），不在 `common.json`
 
 不在本计划里（明确不动的文件）：
 - `kun/` runtime 包
@@ -74,110 +76,129 @@
 
 ---
 
-# Phase 1：settings 全局开关（Commit 1）
+# Phase 1：settings per-channel 开关 + IPC schema（Commit 1）
 
-本 Phase 引入 `weixinStream` 设置字段；ClawRuntime 暂不消费。完成后，settings migration 兜底老用户。
+本 Phase 引入 `weixinStream` per-channel 字段（mirror `feishuStream` 在 commit `548baac` 之后的形态）。完成后，settings normalizer 给新 channel 默认 `false`，IPC schema 接受 patch。
 
-## Task 1.1：在 `ClawImSettingsV1` 类型加 `weixinStream` 字段
+**重写说明**：原 plan 假设全局在 `ClawImSettingsV1`，加 migration。`548baac` 把 `feishuStream` 改为 per-channel 后，本 plan 跟随：
+- 字段在 `ClawImChannelV1`，与 `feishuStream?` 完全平行
+- normalizer 默认 `false`，与 `feishuStream` 一致
+- **不写 migration**（旧全局 `claw.im.feishuStream` 被 `normalizeClawSettings` 静默丢弃，沿用同一行为）
+- IPC schema `clawImChannelPatchSchema` 加 `weixinStream: z.boolean().optional()`
+
+## Task 1.1：在 `ClawImChannelV1` 类型加 `weixinStream` 字段
 
 **Files:**
-- Modify: `src/shared/app-settings-types.ts`（在 `feishuStream?` 之后追加）
+- Modify: `src/shared/app-settings-types.ts`（在 `feishuStream?` line 596 之后追加）
 
-- [ ] **Step 1：读当前 `ClawImSettingsV1` 定义**
+- [ ] **Step 1：读当前 `ClawImChannelV1` 定义**
 
-Read: `src/shared/app-settings-types.ts`。找到 `feishuStream?: boolean` 字段，记下上下文（紧邻哪个字段、注释风格、缩进）。
+Read: `src/shared/app-settings-types.ts:576-599`。找到 `feishuStream?: boolean` 字段（line 596），记下上下文。
 
 - [ ] **Step 2：在 `feishuStream?` 之后追加新字段**
 
-在 `feishuStream?: boolean` 字段后追加（保持 JSDoc 注释风格与现有字段一致）：
+在 line 596 `feishuStream?: boolean` 字段后追加：
 
 ```ts
-  /** 当 provider === 'weixin' 时,是否把 agent 回复改为 block streaming。默认 true。 */
+  /** 当 provider === 'weixin' 时,是否把 agent 回复改为 block streaming。默认 false (per-channel)。 */
   weixinStream?: boolean
 ```
+
+注：commit `956714a` 已经把 `weixinStream?: boolean` 加到了 `ClawImChannelV1`（在 feishuStream 紧邻处）。验证该字段已存在且 JSDoc 与本 Task 一致；不一致则修改。
 
 - [ ] **Step 3：跑 typecheck**
 
 Run: `npx tsc --noEmit -p tsconfig.json 2>&1 | head -20`
-Expected: 无错误（仅新增 optional 字段，不影响现有代码）
+Expected: 无错误
 
-## Task 1.2：default normalizer 补默认值
+## Task 1.2：default normalizer 补默认值（per-channel false）
 
 **Files:**
-- Modify: `src/shared/app-settings-claw.ts`（在 `feishuStream` 默认值后追加）
+- Modify: `src/shared/app-settings-claw.ts`（在通道 mapper `feishuStream` 默认值 line 159-162 后追加）
 
-- [ ] **Step 1：读 `app-settings-claw.ts` 找到 `feishuStream` 默认值**
+- [ ] **Step 1：读 `app-settings-claw.ts` 通道 mapper**
 
-Read: `src/shared/app-settings-claw.ts`。找到 `feishuStream: true` 这一行，记下所在对象（通常是 `claw.im` 字段的 default normalizer）。
+Read: `src/shared/app-settings-claw.ts:155-165`。找到 `normalizeClawSettings` 函数内的 channel `.map()` 回调（约 line 125-150 之内，line 159-162 是 feishuStream 默认值）。
 
-- [ ] **Step 2：追加 `weixinStream: true` 默认值**
+- [ ] **Step 2：追加 `weixinStream` 默认值**
 
-紧邻 `feishuStream: true` 后追加：
+紧邻 `feishuStream: normalizeBoolean(raw.feishuStream, false)` 行后追加：
 
 ```ts
-      weixinStream: true,
+      // Per-channel weixinStream. Default off (false); only flip
+      // to true when the user explicitly enables block streaming
+      // for this specific WeChat channel.
+      weixinStream: normalizeBoolean(raw.weixinStream, false),
 ```
+
+（注释风格与 feishuStream 紧邻注释一致；缩进与上下文对齐。）
 
 - [ ] **Step 3：跑单测确认现有 case 仍通过**
 
 Run: `npm run test -- src/shared/app-settings.test.ts 2>&1 | tail -20`
-Expected: 现有 case 全过；没有 case fail
+Expected: 现有 case 全过；没新增 fail
 
-## Task 1.3：migration 函数补默认值
+## Task 1.3：normalizer 测试 + IPC schema + commit Phase 1
 
 **Files:**
-- Modify: `src/main/settings-store.ts`（在 `feishuStream` migration 之后追加）
+- Modify: `src/shared/app-settings.test.ts`（追加 2 个 case 在 line 343-370 feishuStream 测试紧邻处）
+- Modify: `src/main/ipc/app-ipc-schemas.ts`（line 586 `clawImChannelPatchSchema` 加 `weixinStream`）
 
-- [ ] **Step 1：读 `settings-store.ts` 的 migration 函数**
+- [ ] **Step 1：写 normalizer 失败测试（默认 false）**
 
-Read: `src/main/settings-store.ts`。找到 `claw.im.feishuStream ?? true` 这一行，记下所在 migration 块。
-
-- [ ] **Step 2：追加 `weixinStream` migration**
-
-紧邻 `feishuStream ?? true` 后追加：
+Read `src/shared/app-settings.test.ts:343-370` 找到 feishuStream 测试模板。新增 case：
 
 ```ts
-      weixinStream ?? true
-```
+  it('defaults per-channel ClawImChannelV1.weixinStream to false when missing on old settings', () => {
+    const defaults = defaultClawSettings()
+    const legacyChannel = { ...defaults.channels[0], id: 'channel_legacy' }
+    delete (legacyChannel as Partial<typeof legacyChannel>).weixinStream
+    const normalized = normalizeAppSettings({ ...defaults, claw: { ...defaults.claw, channels: [legacyChannel] } })
+    expect(normalized.claw.channels[0].weixinStream).toBe(false)
+  })
 
-注意：与 `feishuStream` 的具体写法保持一致（多半是 `next.claw.im.weixinStream ??= true` 或 `next.claw.im.weixinStream ?? true`，看现有代码实际模式）。
-
-- [ ] **Step 3：写 migration 失败测试**
-
-Read `src/shared/app-settings.test.ts` 找 `feishuStream` migration test 的位置。新增一个 case：
-
-```ts
-  it('migrates legacy settings to default weixinStream = true', () => {
-    const legacy = {
-      version: 1,
-      claw: { im: {} },
-      // ...其它必要字段
-    }
-    const migrated = migrateSettings(legacy)
-    expect(migrated.claw.im.weixinStream).toBe(true)
+  it('preserves ClawImChannelV1.weixinStream=true when explicitly set on old settings', () => {
+    const defaults = defaultClawSettings()
+    const legacyChannel = { ...defaults.channels[0], id: 'channel_legacy', weixinStream: true }
+    const normalized = normalizeAppSettings({ ...defaults, claw: { ...defaults.claw, channels: [legacyChannel] } })
+    expect(normalized.claw.channels[0].weixinStream).toBe(true)
   })
 ```
 
-具体字段填充看 `feishuStream` test 的输入模板，保持一致。
+具体构造以既有 feishuStream test 为模板（line 343-370 模板）。
 
-- [ ] **Step 4：跑测试确认新 case 通过**
+- [ ] **Step 2：跑测试确认新 case 通过**
 
 Run: `npm run test -- src/shared/app-settings.test.ts -t 'weixinStream' 2>&1 | tail -20`
-Expected: 新 case PASS（migration 已经在 Step 2 加好）
+Expected: 2 个 case PASS
 
-- [ ] **Step 5：跑全套验证**
+- [ ] **Step 3：IPC schema 加 `weixinStream`**
 
-Run: `npm run typecheck && npm run test -- src/shared/app-settings.test.ts 2>&1 | tail -20`
-Expected: typecheck 0 错；test 全过
+Read: `src/main/ipc/app-ipc-schemas.ts:570-587` 的 `clawImChannelPatchSchema`。在 line 586 `feishuStream: z.boolean().optional()` 之后追加：
 
-- [ ] **Step 6：commit**
+```ts
+  weixinStream: z.boolean().optional()
+```
+
+（`.strict()` 模式，遗漏会导致 patch 失败；必须显式列出。）
+
+- [ ] **Step 4：跑 typecheck**
+
+Run: `npx tsc --noEmit -p tsconfig.json 2>&1 | head -20`
+Expected: 0 错
+
+- [ ] **Step 5：commit**
 
 ```bash
-git add src/shared/app-settings-types.ts src/shared/app-settings-claw.ts src/main/settings-store.ts src/shared/app-settings.test.ts
-git commit -m "feat(settings): add global weixinStream toggle (default true)
+git add src/shared/app-settings-types.ts \
+        src/shared/app-settings-claw.ts \
+        src/main/ipc/app-ipc-schemas.ts \
+        src/shared/app-settings.test.ts
+git commit -m "feat(settings): add per-channel weixinStream toggle (default false)
 
-Mirrors feishuStream: global switch for WeChat block streaming.
-Migration backfills weixinStream ?? true for legacy settings."
+Mirrors feishuStream after 548baac: per-channel field on ClawImChannelV1,
+default off, IPC schema accepts patch. No migration (legacy global
+fields silently dropped by normalizeClawSettings, same as feishuStream)."
 ```
 
 ---
@@ -1091,25 +1112,28 @@ Read: `src/main/claw-runtime.ts` 的 `runStreamingReply`。它构造 `FeishuStre
 Run: `npx tsc --noEmit -p tsconfig.json 2>&1 | head -20`
 Expected: 0 错
 
-## Task 3.3：修改 `handleWebhook` 加 `weixinStream` 分支
+## Task 3.3：修改 `handleWebhook` 加 `weixinStream` 分支（per-channel 模式）
 
 **Files:**
 - Modify: `src/main/claw-runtime.ts`（在 `handleWebhook` 找到 `provider === 'weixin'` 分支）
 
-- [ ] **Step 1：读 `handleWebhook` 现有 weixin 分支**
+- [ ] **Step 1：读 `handleWebhook` 现有 weixin 分支 + 飞书 per-channel 模式**
 
-Read: `src/main/claw-runtime.ts` 的 `handleWebhook`。找到 `provider === 'weixin'` 或 `payload.provider === 'weixin'` 分支，记下当前走 `processIncomingImPrompt` 的位置。
+Read: `src/main/claw-runtime.ts:1820-1830` 的 `handleFeishuMessage`，参考其 `channel.feishuStream === true` 模式。再找到 `handleWebhook` 中 `provider === 'weixin'` 或 `payload.provider === 'weixin'` 分支，记下当前走 `processIncomingImPrompt` 的位置。
 
-- [ ] **Step 2：在 weixin 分支处加 `weixinStream` 判断**
+- [ ] **Step 2：在 weixin 分支处加 `weixinStream` 判断（per-channel）**
 
-伪代码（具体语法需对齐现有 handler 的 TS 风格）：
+参考飞书 line 1822-1825 的 `channel.feishuStream === true` 模式，weixin 镜像：
 
 ```ts
   // 现有：if (provider === 'weixin') return this.processIncomingImPrompt(payload)
   // 改为：
   if (provider === 'weixin') {
+    // 找到 payload 对应的 channel
     const settings = await this.deps.store.load()
-    if (settings.claw?.im?.weixinStream !== false) {
+    const channel = settings.claw?.channels?.find((c) => c.id === payload.message?.accountId || c.accountId === payload.message?.accountId) ?? null
+    // weixinStream 是 per-channel 字段。默认 false；只有显式 channel.weixinStream === true 才走流式
+    if (channel?.weixinStream === true) {
       // 流式路径
       const { threadId, turnId } = await this.createThreadAndTurn(payload)  // 现有逻辑
       const bridgeHandle = this.deps.weixinBridge  // 需注入
@@ -1123,36 +1147,40 @@ Read: `src/main/claw-runtime.ts` 的 `handleWebhook`。找到 `provider === 'wei
       })
       return { reply: '', messageCount: result.messageCount }  // ← reply 空 = bridge 不发尾包
     }
-    // 兜底
+    // 兜底（原 processIncomingImPrompt 路径）
     return this.processIncomingImPrompt(payload)
   }
 ```
 
-**`weixinBridge` 依赖注入**：检查现有 `this.deps` 类型，可能需要新增 `weixinBridge?: WeixinBridgeHandle` 字段。如果现有 `deps` 不支持注入，看 `claw-runtime-helpers.ts` 或 `register-app-ipc-handlers.ts` 怎么传 bridge 到 runtime，复制同样的模式。Read 既有注入代码后调整。
+**关键参考**：飞书 line 1825 的 `channel.feishuStream === true` 模式用 strict equality（不是 `!== false`）；本 spec 镜像一致 — 只有显式 `true` 才走流式，其它全部走兜底。
 
-- [ ] **Step 3：跑现有 test 确认 weixinStream=false 路径不退化**
+**`channel` 查找逻辑**：webhook 载荷里 `message.accountId` 是 bot 账号 id（参考 `weixin-bridge-runtime.ts:803` buildWebhookMessage 字段 `accountId`）。需要把 accountId 映射到 `ClawImChannelV1.id`（具体映射逻辑看现有 `handleFeishuMessage` 怎么从 channelId / accountId 找 channel，照搬）。
+
+**`weixinBridge` 依赖注入**：检查现有 `this.deps` 类型，可能需要新增 `weixinBridge?: WeixinBridgeHandle` 字段。如果现有 `deps` 不支持注入，看 `register-app-ipc-handlers.ts` 怎么传 weixin-bridge-runtime 到 claw-runtime，复制同样的模式。Read 既有注入代码后调整。
+
+- [ ] **Step 3：跑现有 test 确认 channel.weixinStream 未设置时走原路径**
 
 Run: `npm run test -- src/main/claw-runtime.test.ts 2>&1 | tail -20`
-Expected: 现有 case 全过（默认行为不变）
+Expected: 现有 case 全过（默认行为不变：channel.weixinStream 不为 true 时走 processIncomingImPrompt）
 
-## Task 3.4：写集成测试 — 流式成功
+## Task 3.4：写集成测试 — 流式成功（per-channel entry）
 
 **Files:**
 - Modify: `src/main/claw-runtime.test.ts`（追加 case）
 
 - [ ] **Step 1：读现有 `claw-runtime.test.ts` 找 Feishu 流式测试**
 
-Read: `src/main/claw-runtime.test.ts`，找到飞书 spec 加的 `runStreamingReply` 集成测试（约 4-5 个 case），复制改写为 WeChat 版本。
+Read: `src/main/claw-runtime.test.ts:3656` 找到飞书 spec 加的 `runStreamingReply when channel.feishuStream=true` 测试，复制改写为 WeChat 版本（用 `channel.weixinStream === true` 替代）。
 
 - [ ] **Step 2：追加流式成功 case**
 
 ```ts
-  it('runs streaming reply on weixin webhook when weixinStream=true', async () => {
+  it('runs streaming reply on weixin webhook when channel.weixinStream=true', async () => {
     const sendMessage = vi.fn().mockResolvedValue({ messageId: 'mid' })
     const weixinBridge = { sendMessage }
-    // ...设置 mock store: claw.im.weixinStream = true
-    // ...mock createThreadAndTurn 返回 threadId/turnId
-    // ...mock subscribeSse 喂 5 个 delta + turn_completed
+    // mock store 含 channel.weixinStream = true
+    // mock createThreadAndTurn 返回 threadId/turnId
+    // mock subscribeSse 喂 5 个 delta + turn_completed
 
     const result = await runtime.handleWebhook({
       provider: 'weixin',
@@ -1165,14 +1193,14 @@ Read: `src/main/claw-runtime.test.ts`，找到飞书 spec 加的 `runStreamingRe
   })
 ```
 
-具体 mock 设置参考飞书 case 的写法。
+mock 设置参考飞书 case 写法（line 3656+）。
 
 - [ ] **Step 3：跑测试确认通过**
 
 Run: `npm run test -- src/main/claw-runtime.test.ts -t 'weixin' 2>&1 | tail -20`
 Expected: PASS
 
-## Task 3.5：写集成测试 — 流式失败 fallback / bridge 契约 / attachment
+## Task 3.5：写集成测试 — 流式失败 fallback / bridge 契约 / per-channel gating
 
 **Files:**
 - Modify: `src/main/claw-runtime.test.ts`（追加 case）
@@ -1190,9 +1218,9 @@ Expected: PASS
     // 验证 fallback 调 sendMessage 一次，文本为 "抱歉，生成失败..."
   })
 
-  it('uses processIncomingImPrompt when weixinStream=false', async () => {
-    // 设置 claw.im.weixinStream = false
-    // 验证 handleWebhook 不调用 streamer
+  it('uses processIncomingImPrompt when channel.weixinStream is not true', async () => {
+    // 设置 channel.weixinStream = undefined / false
+    // 验证 handleWebhook 不调用 streamer，走 processIncomingImPrompt
   })
 
   it('passes contextToken through to every sendMessage call', async () => {
@@ -1200,12 +1228,12 @@ Expected: PASS
   })
 ```
 
-具体 mock 参考飞书 spec 已有 case。Read `src/main/claw-runtime.test.ts` 找飞书 fallback case，复制改写。
+mock 参考飞书 spec 已有 case（line 3747, 3809, 3890, 3976 都是 feishuStream gate 变体）。
 
 - [ ] **Step 2：跑测试确认通过**
 
 Run: `npm run test -- src/main/claw-runtime.test.ts -t 'weixin' 2>&1 | tail -20`
-Expected: 5+ 个 case PASS
+Expected: 5 个 case PASS
 
 ## Task 3.6：跑全套验证 + commit Phase 3
 
@@ -1233,71 +1261,88 @@ processIncomingImPrompt path preserved for weixinStream=false."
 
 ## Task 4.1：读 `settings-section-claw.tsx` 的 `feishuStream` row
 
-Read: `src/renderer/src/components/settings-section-claw.tsx`。找到 `feishuStream` `SettingRow` 完整代码块，记下：
-- `SettingRow` 用法（label / value / onChange / inlineStateText 等 props）
-- i18n key 命名风格
-- inline state 文字（"已开启" / "已关闭"）
-- 测试 mock pattern
+Read: `src/renderer/src/components/settings-section-claw.tsx:182-200`。找到 `feishuStream` `SettingRow` 完整代码块（gate `channel.provider === 'feishu'`），记下：
+- `SettingRow` 用法（`title` / `description` / `control` props）
+- i18n key 命名（`clawFeishuStream` / `clawFeishuStreamDesc` — 在 settings.json，不是 common.json）
+- inline state 文字（`clawManageAgentEnabled` / `clawManageAgentDisabled`）
+- `updateChannel` 调用方式（line 49-59 + line 195）
+- 测试 mock pattern（**没有 toggle 可见性的现有 test**，需新增）
 
 ## Task 4.2：追加 `weixinStream` SettingRow
 
 **Files:**
-- Modify: `src/renderer/src/components/settings-section-claw.tsx`（紧邻 `feishuStream` row 后）
+- Modify: `src/renderer/src/components/settings-section-claw.tsx`（紧邻 `feishuStream` row line 200 后）
 
 - [ ] **Step 1：复制 `feishuStream` row 改写**
 
+参考 line 182-200 的 feishuStream row，gate 改为 `channel.provider === 'weixin'`，i18n key 改为 weixin：
+
 ```tsx
-<SettingRow
-  label={t('claw.weixinStreamLabel', '启用流式输出（微信）')}
-  value={settings.claw?.im?.weixinStream !== false}
-  onChange={(v) => patchSettings({ claw: { im: { weixinStream: v } } })}
-  inlineStateText={settings.claw?.im?.weixinStream !== false
-    ? t('common.enabled', '已启用')
-    : t('common.disabled', '已关闭')}
-/>
+{channel.provider === 'weixin' && (
+  <SettingRow
+    title={t('clawWeixinStream')}
+    description={t('clawWeixinStreamDesc')}
+    control={
+      <div className="flex items-center gap-2">
+        <span className="text-[12px] font-medium text-ds-muted">
+          {channel.weixinStream === true
+            ? t('clawManageAgentEnabled')
+            : t('clawManageAgentDisabled')}
+        </span>
+        <Toggle
+          checked={channel.weixinStream === true}
+          onChange={(value) => updateChannel(form, update, channel.id, { weixinStream: value })}
+        />
+      </div>
+    }
+  />
+)}
 ```
 
-具体 props 命名（`value` / `checked` / `onChange(v)` / `patchSettings`）以既有 `feishuStream` row 为准。
+具体 props 命名以既有 `feishuStream` row 为准；strict equality `=== true` 与飞书一致。
 
 - [ ] **Step 2：跑 renderer typecheck**
 
 Run: `npx tsc --noEmit -p src/renderer/tsconfig.json 2>&1 | head -20`
 Expected: 0 错
 
-## Task 4.3：i18n keys
+## Task 4.3：i18n keys（只在 settings.json，不在 common.json）
 
 **Files:**
-- Modify: `src/renderer/src/locales/en/common.json`
-- Modify: `src/renderer/src/locales/zh/common.json`
-- Modify: `src/renderer/src/locales/en/settings.json`
-- Modify: `src/renderer/src/locales/zh/settings.json`
+- Modify: `src/renderer/src/locales/en/settings.json`（line 66-67 feishuStream 紧邻处）
+- Modify: `src/renderer/src/locales/zh/settings.json`（line 66-67 feishuStream 紧邻处）
 
-- [ ] **Step 1：读 `feishuStream` 在 4 个 json 文件中的 key**
+- [ ] **Step 1：读 `clawFeishuStream` 在 2 个 settings.json 文件中的 key**
 
-Read 4 个 json 文件，找 `feishuStreamLabel` / `feishuStreamInlineState`（或实际命名）。
+Read 两个文件 line 66-67：
 
-- [ ] **Step 2：追加 `weixinStream` 对应 keys**
-
-每个文件追加（命名与 feishuStream 对齐）：
-
-**`en/common.json`**：
 ```json
-  "claw.weixinStreamLabel": "Enable streaming output (WeChat)",
+"clawFeishuStream": "Enable streaming output",
+"clawFeishuStreamDesc": "Enable streaming output"
 ```
 
-**`zh/common.json`**：
+- [ ] **Step 2：追加 `weixinStream` 对应 keys（每文件 +2 行）**
+
+**`en/settings.json`** 紧邻 `clawFeishuStreamDesc` 后追加：
+
 ```json
-  "claw.weixinStreamLabel": "启用流式输出（微信）",
+  "clawWeixinStream": "Enable block streaming output (WeChat)",
+  "clawWeixinStreamDesc": "Send the reply as multiple short messages instead of one long message",
 ```
 
-**`en/settings.json`** 与 **`zh/settings.json`**：如果 feishuStream 有 `inlineState` key 在 settings.json，加 `weixinStreamInlineState` 同步；否则不加。
+**`zh/settings.json`** 紧邻 `clawFeishuStreamDesc` 后追加：
+
+```json
+  "clawWeixinStream": "启用流式输出（微信）",
+  "clawWeixinStreamDesc": "把回复切成多条短消息逐条发送，而不是一次性长消息",
+```
 
 - [ ] **Step 3：跑 i18n test 确认无缺 key**
 
 Run: `npm run test -- src/renderer/src/locales 2>&1 | tail -10`
-Expected: 0 错（i18n keys 完整）
+Expected: 0 错
 
-## Task 4.4：写 renderer 单测
+## Task 4.4：写 renderer 单测（**首次**，feishuStream toggle 也没有此类 test）
 
 **Files:**
 - Modify: `src/renderer/src/components/settings-section-claw.test.ts`
@@ -1305,40 +1350,44 @@ Expected: 0 错（i18n keys 完整）
 - [ ] **Step 1：追加 2 个 case**
 
 ```ts
-  it('renders weixinStream SettingRow with default true', () => {
-    render(<SettingsSectionClaw ... />)
+  it('renders weixinStream SettingRow for weixin channel, hidden for feishu', () => {
+    render(<SettingsSectionClaw ... channel={{ provider: 'weixin', ... }} />)
     expect(screen.getByText('启用流式输出（微信）')).toBeInTheDocument()
   })
 
-  it('toggles weixinStream via patchSettings', async () => {
-    const patchSettings = vi.fn()
-    render(<SettingsSectionClaw ... />)
+  it('hides weixinStream SettingRow for feishu channel', () => {
+    render(<SettingsSectionClaw ... channel={{ provider: 'feishu', ... }} />)
+    expect(screen.queryByText('启用流式输出（微信）')).not.toBeInTheDocument()
+  })
+
+  it('toggles weixinStream via updateChannel', async () => {
+    const updateChannel = vi.fn()
+    render(<SettingsSectionClaw ... channel={{ provider: 'weixin', weixinStream: false, ... }} />)
     const toggle = screen.getByRole('switch', { name: /启用流式输出（微信）/ })
     await userEvent.click(toggle)
-    expect(patchSettings).toHaveBeenCalledWith({ claw: { im: { weixinStream: false } } })
+    expect(updateChannel).toHaveBeenCalledWith(expect.anything(), expect.anything(), channelId, { weixinStream: true })
   })
 ```
 
-具体断言以既有 `feishuStream` test 为模板。
+**注意**：现有 feishuStream toggle 也没有 renderer test（per investigator）；本 Task 是首批 toggle 可见性测试。Mock `updateChannel` / `form` / `update` 时按既有 test 文件的 mock pattern 走。Read `settings-section-claw.test.ts` 顶部 imports 后补全依赖。
 
 - [ ] **Step 2：跑测试**
 
 Run: `npm run test -- src/renderer/src/components/settings-section-claw.test.ts 2>&1 | tail -10`
-Expected: PASS
+Expected: 3 个 case PASS
 
 ## Task 4.5：commit Phase 4
 
 ```bash
 git add src/renderer/src/components/settings-section-claw.tsx \
         src/renderer/src/components/settings-section-claw.test.ts \
-        src/renderer/src/locales/en/common.json \
-        src/renderer/src/locales/zh/common.json \
         src/renderer/src/locales/en/settings.json \
         src/renderer/src/locales/zh/settings.json
 git commit -m "feat(claw-settings): expose weixinStream toggle in manage-agents card
 
-SettingRow next to feishuStream with bilingual label and inline state.
-i18n keys added in en/zh common.json."
+SettingRow next to feishuStream with gate channel.provider === 'weixin'.
+Mirrors feishuStream pattern (strict equality === true, default false).
+i18n keys clawWeixinStream / clawWeixinStreamDesc added in settings.json."
 ```
 
 ---
@@ -1415,10 +1464,11 @@ Expected: 0 typecheck 错；0 lint 错；全测过；build 成功。
 # 不在本计划范围（明确不做）
 
 - ❌ typing 指示器（`sendTyping` + `typing_ticket`）
-- ❌ per-channel `weixinStream` 粒度
+- ❌ 全局聚合 `weixinStream`（已确定 per-channel）
 - ❌ Card JSON 2.0 富卡片
 - ❌ reasoning delta 透出
 - ❌ 飞书 channel 代码修改
 - ❌ `kun/` runtime 包
 - ❌ 微信 SDK 升级策略
 - ❌ 工具调用状态展示
+- ❌ 旧全局 `claw.im.weixinStream` 字段的 migration（与 `feishuStream` 一致，被 `normalizeClawSettings` 静默丢弃）
