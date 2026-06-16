@@ -179,7 +179,7 @@ export function ClawSettingsSection({ ctx }: { ctx: ClawSettingsContext }): Reac
                   </div>
                 </div>
 
-                {channel.provider !== 'weixin' && (
+                {channel.provider === 'feishu' && (
                   <div className="mt-3 flex items-center justify-between gap-3 rounded-[10px] border border-ds-border bg-ds-main/35 px-3 py-2">
                     <div className="min-w-0 flex-1">
                       <div className="text-[13px] font-semibold text-ds-ink">
