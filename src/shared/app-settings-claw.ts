@@ -159,7 +159,11 @@ export function normalizeClawSettings(input: ClawSettingsPatchV1 | undefined): C
             // Per-channel feishuStream. Default is off (false); only flip to
             // true when the user explicitly enables streaming for this
             // specific Feishu / Lark channel.
-            feishuStream: normalizeBoolean(raw.feishuStream, false)
+            feishuStream: normalizeBoolean(raw.feishuStream, false),
+            // Per-channel weixinStream. Default is off (false); only flip to
+            // true when the user explicitly enables block streaming
+            // for this specific WeChat channel.
+            weixinStream: normalizeBoolean(raw.weixinStream, false)
           }
         }),
     tasks: Array.isArray(source.tasks)

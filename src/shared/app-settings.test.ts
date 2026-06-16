@@ -368,6 +368,35 @@ describe('claw settings', () => {
 
     expect(normalized.claw.channels[0].feishuStream).toBe(true)
   })
+
+  it('defaults per-channel ClawImChannelV1.weixinStream to false when missing on old settings', () => {
+    const defaults = defaultClawSettings()
+    const legacyChannel = { ...defaults.channels[0], id: 'channel_legacy' }
+    delete (legacyChannel as Partial<typeof legacyChannel>).weixinStream
+    const normalized = normalizeAppSettings({
+      ...settings(),
+      claw: {
+        ...defaults,
+        channels: [legacyChannel as typeof defaults.channels[0]]
+      }
+    })
+
+    expect(normalized.claw.channels[0].weixinStream).toBe(false)
+  })
+
+  it('preserves ClawImChannelV1.weixinStream=true when explicitly set on old settings', () => {
+    const defaults = defaultClawSettings()
+    const channelWithStream = { ...defaults.channels[0], id: 'channel_stream', weixinStream: true }
+    const normalized = normalizeAppSettings({
+      ...settings(),
+      claw: {
+        ...defaults,
+        channels: [channelWithStream as typeof defaults.channels[0]]
+      }
+    })
+
+    expect(normalized.claw.channels[0].weixinStream).toBe(true)
+  })
 })
 
 describe('isKunRuntimeInsecure', () => {
