@@ -65,6 +65,8 @@
   "clawRunModeDesc": "手机消息和定时任务默认使用的处理方式。",
   "clawFeishuStream": "启用流式输出",
   "clawFeishuStreamDesc": "开启流式输出",
+  "clawWeixinStream": "启用流式输出（微信）",
+  "clawWeixinStreamDesc": "把回复切成多条短消息逐条发送，而不是一次性长消息",
   "clawModeAgent": "直接处理",
   "clawModePlan": "Plan",
   "clawModel": "模型",

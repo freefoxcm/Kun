@@ -65,6 +65,8 @@
   "clawRunModeDesc": "Default handling mode for phone messages and scheduled tasks.",
   "clawFeishuStream": "Enable streaming output",
   "clawFeishuStreamDesc": "Enable streaming output",
+  "clawWeixinStream": "Enable block streaming output (WeChat)",
+  "clawWeixinStreamDesc": "Send the reply as multiple short messages instead of one long message",
   "clawModeAgent": "Act directly",
   "clawModePlan": "Plan",
   "clawModel": "Model",

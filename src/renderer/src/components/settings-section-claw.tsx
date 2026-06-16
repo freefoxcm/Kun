@@ -199,6 +199,26 @@ export function ClawSettingsSection({ ctx }: { ctx: ClawSettingsContext }): Reac
                   />
                 )}
 
+                {channel.provider === 'weixin' && (
+                  <SettingRow
+                    title={t('clawWeixinStream')}
+                    description={t('clawWeixinStreamDesc')}
+                    control={
+                      <div className="flex items-center gap-2">
+                        <span className="text-[12px] font-medium text-ds-muted">
+                          {channel.weixinStream === true
+                            ? t('clawManageAgentEnabled')
+                            : t('clawManageAgentDisabled')}
+                        </span>
+                        <Toggle
+                          checked={channel.weixinStream === true}
+                          onChange={(value) => updateChannel(form, update, channel.id, { weixinStream: value })}
+                        />
+                      </div>
+                    }
+                  />
+                )}
+
                 <div className="mt-4 grid gap-3 px-3 md:grid-cols-2">
                   <label className="block min-w-0">
                     <span className="mb-1.5 block text-[12px] font-semibold text-ds-muted">
