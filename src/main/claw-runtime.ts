@@ -809,7 +809,16 @@ export class ClawRuntime {
 
   private async runStreamingReplyWeixin(input: {
     bridgeHandle: WeixinBridgeHandle
-    webhookPayload: { message: { accountId: string; from: string; context_token?: string } }
+    /**
+     * WeChat webhook payload shape (see `weixin-bridge-runtime.ts:786
+     * buildWebhookMessage`):
+     * - top-level `from`     = recipient user id (where to send replies)
+     * - top-level `sender`  = alias for `from` (always equal)
+     * - `message.accountId` = bot account id (who is replying)
+     * - `message.context_token` = NOT propagated by the bridge; the
+     *   bridge manages its own context tokens internally per recipient.
+     */
+    webhookPayload: { from?: string; sender?: string; message: { accountId?: string; context_token?: string } }
     threadId: string
     turnId: string
     responseTimeoutMs: number
@@ -824,10 +833,11 @@ export class ClawRuntime {
     let streamer: WeixinStreamer | null = null
     try {
       const settings = await this.deps.store.load()
+      const recipient = input.webhookPayload.from ?? input.webhookPayload.sender ?? ''
       streamer = new WeixinStreamer({
         bridge: input.bridgeHandle,
-        accountId: input.webhookPayload.message.accountId,
-        to: input.webhookPayload.message.from,
+        accountId: input.webhookPayload.message.accountId ?? '',
+        to: recipient,
         turnId: input.turnId,
         threadId: input.threadId,
         contextToken: input.webhookPayload.message.context_token,
@@ -856,8 +866,8 @@ export class ClawRuntime {
       const fallbackText = finalText + partialNote || '抱歉，生成失败，请稍后再试。'
       try {
         await input.bridgeHandle.sendMessage(
-          input.webhookPayload.message.accountId,
-          input.webhookPayload.message.from,
+          input.webhookPayload.message.accountId ?? '',
+          input.webhookPayload.from ?? input.webhookPayload.sender ?? '',
           fallbackText,
           input.webhookPayload.message.context_token
         )
@@ -2422,7 +2432,7 @@ export class ClawRuntime {
         }
         const streamResult = await this.runStreamingReplyWeixin({
           bridgeHandle: this.deps.weixinBridge,
-          webhookPayload: payload as { message: { accountId: string; from: string; context_token?: string } },
+          webhookPayload: payload as { from?: string; sender?: string; message: { accountId?: string; context_token?: string } },
           threadId: started.threadId,
           turnId: started.turnId,
           responseTimeoutMs: 600_000,
