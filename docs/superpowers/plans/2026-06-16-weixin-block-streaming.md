@@ -1023,8 +1023,19 @@ Read: `src/main/claw-runtime.ts` 的 `runStreamingReply`。它构造 `FeishuStre
 
 ```ts
   private async runStreamingReplyWeixin(input: {
-    bridgeHandle: WeixinBridgeHandle  // 定义见下方说明
-    webhookPayload: { message: { accountId: string; from: string; context_token?: string } }
+    bridgeHandle: WeixinBridgeHandle
+    /**
+     * WeChat webhook payload 实际形状（见 weixin-bridge-runtime.ts:786 buildWebhookMessage）：
+     * - top-level `from`     = 收件人 user id（推流时作为 `to`）
+     * - top-level `sender`  = `from` 的别名（始终相等）
+     * - `message.accountId` = bot 账号 id
+     * - `message.context_token` = **不存在**（bridge 内部自管）
+     *
+     * ⚠️ spec 初版假设 `message.from` 和 `message.context_token` 存在，导致
+     *    `to: undefined`，bridge.sendMessage 抛 TypeError，微信侧无任何消息。
+     *    修复后类型注释标注此处的真实形状。详细 bug 复盘见 spec 「历史 Bug 复盘」节。
+     */
+    webhookPayload: { from?: string; sender?: string; message: { accountId?: string; context_token?: string } }
     threadId: string
     turnId: string
     responseTimeoutMs: number
@@ -1039,13 +1050,14 @@ Read: `src/main/claw-runtime.ts` 的 `runStreamingReply`。它构造 `FeishuStre
     let streamer: WeixinStreamer | null = null
     try {
       const settings = await this.deps.store.load()
+      const recipient = input.webhookPayload.from ?? input.webhookPayload.sender ?? ''
       streamer = new WeixinStreamer({
         bridge: input.bridgeHandle,
-        accountId: input.webhookPayload.message.accountId,
-        to: input.webhookPayload.message.from,
+        accountId: input.webhookPayload.message.accountId ?? '',
+        to: recipient,
         turnId: input.turnId,
         threadId: input.threadId,
-        contextToken: input.webhookPayload.message.context_token,
+        contextToken: undefined,  // webhook 不含 context_token；bridge 内部自管
         minChars: 200,
         idleMs: 3000,
         responseTimeoutMs: input.responseTimeoutMs,
@@ -1071,10 +1083,10 @@ Read: `src/main/claw-runtime.ts` 的 `runStreamingReply`。它构造 `FeishuStre
       const fallbackText = finalText + partialNote || '抱歉，生成失败，请稍后再试。'
       try {
         await input.bridgeHandle.sendMessage(
-          input.webhookPayload.message.accountId,
-          input.webhookPayload.message.from,
+          input.webhookPayload.message.accountId ?? '',
+          input.webhookPayload.from ?? input.webhookPayload.sender ?? '',
           fallbackText,
-          input.webhookPayload.message.context_token
+          undefined  // context_token: webhook 不含
         )
         return { ok: true, messageCount, finalText, fellBack: true }
       } catch (fbError) {
@@ -1184,7 +1196,8 @@ Read: `src/main/claw-runtime.test.ts:3656` 找到飞书 spec 加的 `runStreamin
 
     const result = await runtime.handleWebhook({
       provider: 'weixin',
-      message: { accountId: 'acc', from: 'user-1', context_token: 'ctx' },
+      from: 'user-1',                          // ← 收件人 top-level（不是 message.from）
+      message: { accountId: 'acc' },           // ← 没有 context_token（bridge 内部自管）
       text: 'hello'
     } as any)
 
@@ -1223,8 +1236,9 @@ Expected: PASS
     // 验证 handleWebhook 不调用 streamer，走 processIncomingImPrompt
   })
 
-  it('passes contextToken through to every sendMessage call', async () => {
-    // 验证 webhook 载荷的 context_token 每次都透传
+  it('passes accountId and from through to every sendMessage call', async () => {
+    // 验证 webhook 载荷的 accountId / from 每次都透传到 bridge.sendMessage
+    // context_token 由 bridge 内部 getContextToken 自管，runtime 不透传
   })
 ```
 
