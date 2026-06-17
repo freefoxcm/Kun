@@ -143,10 +143,11 @@ class WeixinStreamer {
     bridge: WeixinBridgeHandle        // weixin-bridge-runtime 暴露的 RPC 客户端；
                                       // 封装 { sendMessage(accountId, to, text, contextToken) → Promise<{ messageId }> }
     accountId: string                 // 来自 webhook 载荷 message.accountId
-    to: string                        // 来自 webhook 载荷 message.from（即 message.to_user_id）
+    to: string                        // 来自 webhook 载荷 top-level `from` 字段（不是 message.from）
     turnId: string
     threadId: string
-    contextToken: string | undefined  // 来自 webhook 载荷 message.context_token
+    contextToken: string | undefined  // 始终 undefined —— webhook 载荷不含 context_token；
+                                      // bridge 内部通过 getContextToken(accountId, to) 自管
     minChars: number                  // 默认 200（与 plugin blockStreamingCoalesceDefaults 对齐）
     idleMs: number                    // 默认 3000（与 plugin blockStreamingCoalesceDefaults 对齐）
     responseTimeoutMs: number         // 总超时
@@ -197,7 +198,19 @@ private subscribeSseForWeixin(
 
 ```ts
 private async runStreamingReplyWeixin(input: {
-  webhookPayload: WeixinWebhookPayload  // 含 accountId, from, contextToken 等
+  /**
+   * WeChat webhook payload 实际形状（见 `weixin-bridge-runtime.ts:786
+   * buildWebhookMessage`）：
+   * - top-level `from`     = 收件人 user id（推流时作为 `to`）
+   * - top-level `sender`  = `from` 的别名（始终相等）
+   * - `message.accountId` = bot 账号 id
+   * - `message.context_token` = **不存在**（bridge 内部 `getContextToken(accountId, recipient)` 自管）
+   *
+   * ⚠️ 历史 bug：spec 初版假设 `message.from` 和 `message.context_token` 存在，
+   * 导致 `to` 为 undefined，bridge.sendMessage 抛 TypeError，webhook 返回 500，
+   * 微信侧无任何消息。修复见 commit `fa64fea`。
+   */
+  webhookPayload: { from?: string; sender?: string; message: { accountId?: string; context_token?: string } }
   threadId: string
   turnId: string
   responseTimeoutMs: number
@@ -213,6 +226,7 @@ private async runStreamingReplyWeixin(input: {
 
 **关键设计**：
 - 构造 `WeixinStreamer`，串接 `subscribeSseForWeixin` 注入 SSE 喂数据
+- `recipient = payload.from ?? payload.sender ?? ''` —— top-level `from` 才是真收件人
 - 成功 → 返回 `{ ok: true, messageCount, finalText, fellBack: false }`；webhook handler 据此构造 `{ reply: '' }` 给 bridge
 - 失败 catch → 把 `streamer.getAccumulatedText()` 拼到一次性 `sendWeixinBridgeMessage` 里 → fallback 永远不丢消息
 - `finally` 调 `streamer.dispose()` + `clearTimeout`，资源必然释放
@@ -224,24 +238,56 @@ private async runStreamingReplyWeixin(input: {
 
 ```ts
 // 伪代码：实际实现需考虑 IPC、settings 读取、turn 编排等现有细节
-if (payload.provider === 'weixin') {
+if (provider === 'weixin' && channel?.weixinStream === true && this.deps.weixinBridge) {
   const settings = await this.deps.store.load()
-  if (settings.claw.im.weixinStream !== false) {
-    // 新路径：流式
-    const { threadId, turnId } = await this.createThreadAndTurn(...)
-    const result = await this.runStreamingReplyWeixin({
-      webhookPayload: payload,
-      threadId,
-      turnId,
-      responseTimeoutMs: ...,
-      context: { ... }
-    })
-    return { reply: '', messageCount: result.messageCount, ... }   // ← 关键：reply 为空
+  const started = await this.processIncomingImPrompt(settings, {
+    prompt,
+    sender,
+    provider: 'weixin',
+    channel,
+    conversation,
+    remoteSession: remoteSession ?? undefined,
+    waitForResult: false  // 不等 turn 完成；streamer.start 接管 SSE 等待
+  })
+  if (!started.ok || !started.threadId || !started.turnId) {
+    writeJson(res, 500, { ok: false, message: started.message || 'Failed to start WeChat streaming turn.' })
+    return
   }
-  // 现有路径
-  return this.processIncomingImPrompt(payload)
+  const streamResult = await this.runStreamingReplyWeixin({
+    bridgeHandle: this.deps.weixinBridge,
+    webhookPayload: payload,  // 含 top-level `from` 和 `message.accountId`
+    threadId: started.threadId,
+    turnId: started.turnId,
+    responseTimeoutMs: 600_000,
+    context: { purpose: 'weixin-stream', channelId: channel.id, threadId: started.threadId, turnId: started.turnId }
+  })
+  if (!streamResult.ok) {
+    writeJson(res, 500, { ok: false, message: streamResult.message || 'WeChat streaming reply failed.' })
+    return
+  }
+  // 关键契约：reply: '' 表示 "bridge 已经发完了"——bridge 看到空字符串不发尾包
+  writeJson(res, 200, {
+    ok: true,
+    threadId: started.threadId,
+    turnId: started.turnId,
+    messageCount: streamResult.messageCount,
+    reply: '',
+    stream: 'weixin'
+  })
+  return
 }
+// 兜底：channel.weixinStream 不为 true 时走原 processIncomingImPrompt 轮询路径
+const result = await this.processIncomingImPrompt(settings, {
+  prompt, sender, provider, channel, conversation, remoteSession: remoteSession ?? undefined
+})
+// ... 现有 polling 路径完整保留 ...
 ```
+
+**关键设计**：
+- **判定三件套**：`provider === 'weixin' && channel?.weixinStream === true && this.deps.weixinBridge`
+- 三个任一不满足就降级到 `processIncomingImPrompt`（原有 polling 路径完全不变）
+- `weixinStream` 是 per-channel 字段（`ClawImChannelV1.weixinStream`），默认 `false`，显式 `=== true` 才走流式
+- **`reply: ''` 是 bridge 不发尾包的契约信号** —— 见 `weixin-bridge-runtime.ts:950` `if (reply)` 守卫
 
 **关键设计**：
 - **`reply: ''` 是契约信号**：bridge 看到 `reply` 为空字符串时**不**调用 `sendMessageWeixin`（已存在逻辑：line 950-955 `if (reply)` 守卫）。
@@ -296,7 +342,11 @@ weixinStream: normalizeBoolean(raw.weixinStream, false)   // 默认 false,与 fe
     │     ▼
     │  [ClawRuntime.handleWebhook]   src/main/claw-runtime.ts
     │     │
-    │     │  1. buildWeixinPrompt + parse { accountId, from, contextToken, text }
+    │     │  1. buildWeixinPrompt + parse { accountId, from, text }
+    │     │     ⚠️ webhook 实际 payload 形状（来自 weixin-bridge-runtime.ts:786）：
+    │     │       - top-level `from`        → 收件人
+    │     │       - `message.accountId`    → bot 账号
+    │     │       - **没有** `message.from` / `message.context_token`
     │     │  2. POST /v1/threads  →  threadId
     │     │  3. POST /v1/threads/{id}/turns  →  turnId
     │     │  4. onTurnStarted: store.patch(threadId)
@@ -318,7 +368,8 @@ weixinStream: normalizeBoolean(raw.weixinStream, false)   // 默认 false,与 fe
     │     │
     │     │  ┌─ streamer = new WeixinStreamer({
     │     │  │     bridge: weixinBridgeHandle,
-    │     │  │     accountId, to, contextToken, turnId, threadId,
+    │     │  │     accountId, to, turnId, threadId,
+    │     │  │     // contextToken: undefined（webhook 不含；bridge 内部自管）
     │     │  │     minChars: 200, idleMs: 3000,
     │     │  │     responseTimeoutMs, logger
     │     │  │  })
@@ -390,13 +441,14 @@ async runStreamingReplyWeixin(input) {
   const cancel = new AbortController()
   const timeout = setTimeout(() => cancel.abort(), input.responseTimeoutMs)
   try {
+    const recipient = input.webhookPayload.from ?? input.webhookPayload.sender ?? ''
     streamer = new WeixinStreamer({
       bridge: input.bridge,
-      accountId: input.webhookPayload.message.accountId,
-      to: input.webhookPayload.message.from,
+      accountId: input.webhookPayload.message.accountId ?? '',
+      to: recipient,
       turnId: input.turnId,
       threadId: input.threadId,
-      contextToken: input.webhookPayload.message.context_token,
+      contextToken: undefined,  // webhook 不含 context_token；bridge 内部自管
       minChars: 200,
       idleMs: 3000,
       responseTimeoutMs: input.responseTimeoutMs,
@@ -617,3 +669,43 @@ npm run dev
 - 把 `subscribeThreadEventsLive` 推广到其它渠道（Slack / Telegram 等）
 - 微信 channel 的工具调用状态展示（plugin SDK 未提供）
 - 块合并策略自适应（按 SSE delta 速率动态调整 minChars / idleMs）
+
+## 历史 Bug 复盘（commit `fa64fea`）
+
+### 症状
+开启 `channel.weixinStream = true` 后，微信侧**完全收不到任何消息**（包括原本 polling 路径能收到的单条消息）。
+
+### 根因
+`runStreamingReplyWeixin` 从 webhook payload 中取收件人时，**spec 假设的字段路径与生产实际不一致**：
+
+| 字段 | spec 初版假设 | 生产实际（`weixin-bridge-runtime.ts:786 buildWebhookMessage`） |
+|------|---------------|----------------------------------------------|
+| 收件人 | `payload.message.from` | **`payload.from`**（top-level） |
+| bot 账号 | `payload.message.accountId` | `payload.message.accountId` ✓ |
+| context_token | `payload.message.context_token` | **不存在**（bridge 内部 `getContextToken` 自管） |
+
+代码原写：
+```ts
+to: input.webhookPayload.message.from,        // → undefined（该路径在生产 payload 中不存在）
+contextToken: input.webhookPayload.message.context_token,  // → undefined（生产不含此字段）
+```
+
+下游调用链：
+1. `streamer.flushPending` 调 `bridge.sendMessage(accountId, to=undefined, text, undefined)`
+2. bridge wrapper 调 `sendWeixinBridgeMessage({ accountId, to: undefined, text })`
+3. `sendWeixinBridgeMessage` 内部 `options.to.trim()` 抛 `Cannot read properties of undefined (reading 'trim')`
+4. flushPending 的 catch 块 log + 累计 `consecutiveFailures`
+5. `runStreamingReplyWeixin` 的 catch 块尝试 fallback 一次性 send —— 同样失败（`to` 还是 undefined）
+6. `handleWebhook` 返回 500
+7. 微信侧无任何消息送达
+
+### 修复（commit `fa64fea`）
+1. `runStreamingReplyWeixin` 改用 `payload.from ?? payload.sender ?? ''` 提取收件人
+2. 类型注释明确 webhook payload 真实形状，标注 ⚠️ 历史 bug
+3. 5 个测试 mock payload 改用 top-level `from`，移除 `message.context_token`，断言改为 `toBeUndefined()`
+4. fallback 路径同样改用 top-level `from`
+
+### 教训
+1. **spec 时必须验证真实 payload 形状** —— 直接读 `buildWebhookMessage` 的代码，而不是按字段名猜结构
+2. **type cast `as any`** 隐藏了字段缺失的 bug —— 后续应该用更严格的类型 + runtime 校验
+3. **诊断 log 的价值** —— 13 处临时 console.log 帮助精确定位到 `to: undefined` 这一行；保留 commit `fa64fea` 的 log 历史（已删除），以便未来类似 bug 复用模板
