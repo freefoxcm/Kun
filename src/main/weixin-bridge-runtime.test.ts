@@ -117,7 +117,6 @@ describe('sendImageFromUrlWeixin', () => {
   })
 
   it('throws on fetch failure (non-2xx)', async () => {
-    // @ts-expect-error — stub global
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 })
 
     const mod = await import('./weixin-bridge-runtime')
@@ -142,7 +141,6 @@ describe('sendImageFromUrlWeixin', () => {
     ['bmp', [0x42, 0x4d, 0x00, 0x00]],
     ['webp', [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]],
   ])('sniffs %s magic bytes and uploads', async (ext, magicBytes) => {
-    // @ts-expect-error — stub global
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       arrayBuffer: () => Promise.resolve(new Uint8Array(magicBytes).buffer)
