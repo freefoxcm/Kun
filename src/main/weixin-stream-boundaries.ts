@@ -39,8 +39,8 @@ export type BoundaryType = 'paragraph' | 'sentence' | 'comma'
  *
  * Index convention (PREFIX-END): in all cases, `text.slice(0, boundary.index)`
  * yields the content to emit, and `text.slice(boundary.index)` is what stays.
- * - `paragraph`: index points AT the first `\n` of the `\n\n` pair (the blank
- *   line itself is excluded from the emitted prefix)
+ * - `paragraph`: index points AFTER the first `\n` of the `\n\n` pair (the
+ *   emitted prefix keeps one trailing `\n`, the tail keeps one leading `\n`)
  * - `sentence` / `comma`: index points AFTER the punctuation (the punctuation
  *   IS included in the emitted prefix)
  */
@@ -83,7 +83,11 @@ export function findFlushBoundaries(segment: string): Boundary[] {
   }
 
   // Paragraph: \n\n (boundary index = position OF the first \n in the pair,
-  // so callers can flush text before the blank line)
+  // so callers can flush text before the blank line. The streamer treats the
+  // matched `\n\n` as a paragraph break that absorbs the FIRST \n into the
+  // boundary itself — the emitted prefix keeps no trailing \n and the tail
+  // keeps one leading \n. This produces "Hello" + "\nWorld" from a
+  // "Hello\n\nWorld" input rather than "Hello\n" + "\nWorld".)
   const paragraphRe = /\n\n/g
   let pm: RegExpExecArray | null
   while ((pm = paragraphRe.exec(segment)) !== null) {

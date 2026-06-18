@@ -4,11 +4,13 @@ import { WeixinStreamer } from './weixin-streamer'
 // Mock the openclaw-weixin plugin so the test does not depend on real dynamic
 // import resolution under fake timers. StreamingMarkdownFilter is exposed
 // directly via the re-export from send.js (see weixin-bridge-runtime.ts:849).
+// The mock is a no-op pass-through: the boundary-aware flushTick is now
+// responsible for image extraction (via findCompleteImage), so we do not
+// want the filter to strip ![alt](url) before the streamer sees it.
 vi.mock('@tencent-weixin/openclaw-weixin/dist/src/messaging/send.js', () => ({
   StreamingMarkdownFilter: class {
     feed(delta: string): string {
-      // Strip markdown images: ![alt](url)
-      return delta.replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+      return delta
     }
     flush(): string {
       return ''
@@ -22,8 +24,9 @@ type BridgeHandle = {
 
 function makeFakeBridge() {
   const sendMessageWeixin = vi.fn().mockResolvedValue({ messageId: 'mid' })
-  const handle: BridgeHandle = { sendMessage: sendMessageWeixin }
-  return { handle, sendMessageWeixin }
+  const sendImageWeixin = vi.fn().mockResolvedValue({ messageId: 'img-id' })
+  const handle = { sendMessage: sendMessageWeixin, sendImage: sendImageWeixin }
+  return { handle, sendMessageWeixin, sendImageWeixin }
 }
 
 describe('WeixinStreamer', () => {
@@ -40,6 +43,7 @@ describe('WeixinStreamer', () => {
       threadId: 'thread-1',
       contextToken: 'ctx',
       minChars: 200,
+      maxChars: 200,
       idleMs: 3000,
       responseTimeoutMs: 30_000,
       logger: () => {}
@@ -57,18 +61,18 @@ describe('WeixinStreamer', () => {
       })
     }
     await vi.runOnlyPendingTimersAsync()
+    // 250 chars → maxChars=200 forceHard emits first 200, leaves 50 in pendingText.
     expect(sendMessageWeixin).toHaveBeenCalledTimes(1)
     expect(sendMessageWeixin.mock.calls[0]?.[2]).toContain('a'.repeat(50))
 
-    // turn_completed 触发 flush 剩余（如果没有 pending 就 no-op）
+    // turn_completed drains the remaining 50 chars via force-flush.
     streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
     await vi.runOnlyPendingTimersAsync()
-    // pendingText 此时为空，sendMessage 不再调用
-    expect(sendMessageWeixin).toHaveBeenCalledTimes(1)
+    expect(sendMessageWeixin).toHaveBeenCalledTimes(2)
 
     const result = await startPromise
     expect(result.ok).toBe(true)
-    expect(result.messageCount).toBe(1)
+    expect(result.messageCount).toBe(2)
     expect(result.fellBack).toBe(false)
   })
 
@@ -82,6 +86,7 @@ describe('WeixinStreamer', () => {
       threadId: 'thread-1',
       contextToken: undefined,
       minChars: 1000,
+      maxChars: 1000,
       idleMs: 3000,
       responseTimeoutMs: 30_000,
       logger: () => {}
@@ -89,22 +94,26 @@ describe('WeixinStreamer', () => {
     const subscribe = vi.fn().mockReturnValue({ close: vi.fn() })
     const startPromise = streamer.start({ subscribe })
 
-    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'short' } })
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'A short message.' } })
     expect(sendMessageWeixin).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(3000)
     await vi.runOnlyPendingTimersAsync()
+    // sentence boundary at '.' splits the 16-char text into one bubble.
     expect(sendMessageWeixin).toHaveBeenCalledTimes(1)
+    expect(sendMessageWeixin.mock.calls[0]?.[2]).toBe('A short message.')
 
     streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
     await vi.runOnlyPendingTimersAsync()
     await startPromise
   })
 
-  it('filters markdown via StreamingMarkdownFilter (strips images)', async () => {
+  it('extracts complete image markdown via findCompleteImage (boundary-aware flush)', async () => {
     // Switch to real timers so the dynamic import promise resolves naturally.
     vi.useRealTimers()
-    const { handle, sendMessageWeixin } = makeFakeBridge()
+    const sendMessageWeixin = vi.fn().mockResolvedValue({ messageId: 'mid' })
+    const sendImageWeixin = vi.fn().mockResolvedValue({ messageId: 'img-id' })
+    const handle = { sendMessage: sendMessageWeixin, sendImage: sendImageWeixin }
     const streamer = new WeixinStreamer({
       bridge: handle,
       accountId: 'acc',
@@ -125,13 +134,15 @@ describe('WeixinStreamer', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
 
     // 推一段含 markdown 图片的 delta，累积触发 flush
-    const markdown = '![alt](http://x.com/img.png)'.padEnd(250, 'a')
+    const markdown = '![alt](http://x.com/img.png)' + 'a'.repeat(230)
     streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: markdown } })
     await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(sendMessageWeixin).toHaveBeenCalledTimes(1)
-    // 图片标签被剥离
-    const sentText = sendMessageWeixin.mock.calls[0]?.[2] as string
-    expect(sentText).not.toContain('![alt]')
+    // Image at offset 0 is emitted via sendImage, not stripped into text.
+    expect(sendImageWeixin).toHaveBeenCalledWith('acc', 'user-1', 'http://x.com/img.png', undefined)
+    // No text bubble should contain the raw markdown image syntax.
+    for (const call of sendMessageWeixin.mock.calls) {
+      expect(call[2] as string).not.toContain('![alt]')
+    }
 
     streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
     await startPromise
@@ -176,7 +187,7 @@ describe('WeixinStreamer', () => {
     const sendMessageWeixin = vi.fn()
       .mockRejectedValueOnce(new Error('rate_limited'))
       .mockResolvedValueOnce({ messageId: 'mid' })
-    const handle = { sendMessage: sendMessageWeixin }
+    const handle = { sendMessage: sendMessageWeixin, sendImage: vi.fn() }
     const streamer = new WeixinStreamer({
       bridge: handle,
       accountId: 'acc',
@@ -185,6 +196,7 @@ describe('WeixinStreamer', () => {
       threadId: 'thread-1',
       contextToken: undefined,
       minChars: 100,
+      maxChars: 100,
       idleMs: 3000,
       responseTimeoutMs: 30_000,
       logger: () => {}
@@ -193,12 +205,12 @@ describe('WeixinStreamer', () => {
     const startPromise = streamer.start({ subscribe })
 
     // 第 1 次 flush 失败
-    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'a'.repeat(100) } })
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'a'.repeat(150) } })
     await vi.runOnlyPendingTimersAsync()
     expect(sendMessageWeixin).toHaveBeenCalledTimes(1)
 
     // 第 2 次 flush 成功
-    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'b'.repeat(100) } })
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'b'.repeat(150) } })
     await vi.runOnlyPendingTimersAsync()
     expect(sendMessageWeixin).toHaveBeenCalledTimes(2)
 
@@ -209,7 +221,7 @@ describe('WeixinStreamer', () => {
 
   it('triggers fallback after 3 consecutive sendMessage failures', async () => {
     const sendMessageWeixin = vi.fn().mockRejectedValue(new Error('rate_limited'))
-    const handle = { sendMessage: sendMessageWeixin }
+    const handle = { sendMessage: sendMessageWeixin, sendImage: vi.fn() }
     const streamer = new WeixinStreamer({
       bridge: handle,
       accountId: 'acc',
@@ -218,6 +230,7 @@ describe('WeixinStreamer', () => {
       threadId: 'thread-1',
       contextToken: undefined,
       minChars: 100,
+      maxChars: 100,
       idleMs: 3000,
       responseTimeoutMs: 30_000,
       logger: () => {}
@@ -253,6 +266,7 @@ describe('WeixinStreamer', () => {
       threadId: 'thread-1',
       contextToken: undefined,
       minChars: 1000,
+      maxChars: 1000,
       idleMs: 3000,
       responseTimeoutMs: 30_000,
       logger: () => {}
@@ -260,7 +274,7 @@ describe('WeixinStreamer', () => {
     const subscribe = vi.fn().mockReturnValue({ close: vi.fn() })
     const startPromise = streamer.start({ subscribe })
 
-    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'partial' } })
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'partial reply.' } })
     streamer.onSseEvent({ kind: 'turn_failed', turnId: 'turn-1' })
     await vi.runOnlyPendingTimersAsync()
 
@@ -335,7 +349,7 @@ describe('WeixinStreamer', () => {
   })
 
   it('rejects start() when subscribe() throws synchronously', async () => {
-    const handle = { sendMessage: vi.fn() }
+    const handle = { sendMessage: vi.fn(), sendImage: vi.fn() }
     const streamer = new WeixinStreamer({
       bridge: handle,
       accountId: 'acc',
@@ -355,7 +369,7 @@ describe('WeixinStreamer', () => {
   })
 
   it('aborts via responseTimeoutMs when no turn event arrives', async () => {
-    const handle = { sendMessage: vi.fn().mockResolvedValue({ messageId: 'mid' }) }
+    const handle = { sendMessage: vi.fn().mockResolvedValue({ messageId: 'mid' }), sendImage: vi.fn() }
     const streamer = new WeixinStreamer({
       bridge: handle,
       accountId: 'acc',
@@ -364,6 +378,7 @@ describe('WeixinStreamer', () => {
       threadId: 'thread-1',
       contextToken: undefined,
       minChars: 200,
+      maxChars: 200,
       idleMs: 3000,
       responseTimeoutMs: 200,
       logger: () => {}
@@ -391,6 +406,7 @@ describe('WeixinStreamer', () => {
       threadId: 'thread-1',
       contextToken: 'ctx-token-123',
       minChars: 100,
+      maxChars: 100,
       idleMs: 3000,
       responseTimeoutMs: 30_000,
       logger: () => {}
@@ -412,5 +428,111 @@ describe('WeixinStreamer', () => {
 
     streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
     await startPromise
+  })
+
+  // --- boundary-aware flushTick (Task 6) ---
+
+  function makeBridgeHandle() {
+    return {
+      sendMessage: vi.fn().mockResolvedValue({ messageId: 'm1' }),
+      sendImage: vi.fn().mockResolvedValue({ messageId: 'i1' })
+    }
+  }
+
+  function makeBoundaryStreamer(opts?: Partial<{
+    minChars: number
+    maxChars: number
+    idleMs: number
+    bridge: ReturnType<typeof makeBridgeHandle>
+  }>) {
+    const bridge = opts?.bridge ?? makeBridgeHandle()
+    const streamer = new WeixinStreamer({
+      bridge,
+      accountId: 'bot-1',
+      to: 'user-1',
+      turnId: 'turn-1',
+      threadId: 'thr-1',
+      contextToken: 'ctx',
+      minChars: opts?.minChars ?? 50,
+      maxChars: opts?.maxChars ?? 200,
+      idleMs: opts?.idleMs ?? 100,
+      responseTimeoutMs: 60_000,
+      logger: () => {}
+    })
+    return { streamer, bridge }
+  }
+
+  it('flushes at paragraph boundary \\n\\n when minChars reached', async () => {
+    const { streamer, bridge } = makeBoundaryStreamer()
+    const startPromise = streamer.start({ subscribe: () => ({ close: () => {} }) })
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'Hello\n\nWorld' } })
+    streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
+    // Drive microtasks + the 50ms wait loop until start() resolves.
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(100)
+    }
+    await startPromise
+    expect(bridge.sendMessage).toHaveBeenCalledWith('bot-1', 'user-1', 'Hello', 'ctx')
+    expect(bridge.sendMessage).toHaveBeenLastCalledWith('bot-1', 'user-1', '\nWorld', 'ctx')
+  })
+
+  it('falls back to sentence boundary when no paragraph', async () => {
+    const { streamer, bridge } = makeBoundaryStreamer({ minChars: 10 })
+    const startPromise = streamer.start({ subscribe: () => ({ close: () => {} }) })
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'Hello. World this is long enough to flush.' } })
+    streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
+    await vi.advanceTimersByTimeAsync(100)
+    await startPromise
+    const calls = bridge.sendMessage.mock.calls.map(c => c[2])
+    expect(calls[0]).toBe('Hello. ')
+  })
+
+  it('never splits inside code fence', async () => {
+    const { streamer, bridge } = makeBoundaryStreamer({ minChars: 10, maxChars: 1000 })
+    const startPromise = streamer.start({ subscribe: () => ({ close: () => {} }) })
+    const text = '```\nHello. World.\n```'
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text } })
+    streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
+    await vi.advanceTimersByTimeAsync(100)
+    await startPromise
+    const calls = bridge.sendMessage.mock.calls.map(c => c[2])
+    expect(calls).toContain('```\nHello. World.\n```')
+  })
+
+  it('extracts complete image and emits image+text in source order', async () => {
+    const { streamer, bridge } = makeBoundaryStreamer({ minChars: 5 })
+    const startPromise = streamer.start({ subscribe: () => ({ close: () => {} }) })
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'See ![chart](https://e.com/x.png) for details' } })
+    streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
+    await vi.advanceTimersByTimeAsync(100)
+    await startPromise
+    expect(bridge.sendMessage).toHaveBeenCalledWith('bot-1', 'user-1', 'See ', 'ctx')
+    expect(bridge.sendImage).toHaveBeenCalledWith('bot-1', 'user-1', 'https://e.com/x.png', 'ctx')
+    expect(bridge.sendMessage).toHaveBeenLastCalledWith('bot-1', 'user-1', ' for details', 'ctx')
+  })
+
+  it('keeps incomplete image markdown in pendingText and waits', async () => {
+    vi.useRealTimers()
+    const { streamer, bridge } = makeBoundaryStreamer({ minChars: 5, idleMs: 5000 })
+    const startPromise = streamer.start({ subscribe: () => ({ close: () => {} }) })
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: 'See ![chart](https://e.com/x' } })
+    await new Promise(r => setTimeout(r, 50))
+    expect(bridge.sendImage).not.toHaveBeenCalled()
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text: '.png) now' } })
+    streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
+    await startPromise
+    expect(bridge.sendImage).toHaveBeenCalledWith('bot-1', 'user-1', 'https://e.com/x.png', 'ctx')
+  })
+
+  it('hard-splits at maxChars when no boundary found', async () => {
+    const { streamer, bridge } = makeBoundaryStreamer({ minChars: 10, maxChars: 30 })
+    const startPromise = streamer.start({ subscribe: () => ({ close: () => {} }) })
+    const text = 'a'.repeat(60)
+    streamer.onSseEvent({ kind: 'assistant_text_delta', turnId: 'turn-1', item: { text } })
+    streamer.onSseEvent({ kind: 'turn_completed', turnId: 'turn-1' })
+    await vi.advanceTimersByTimeAsync(100)
+    await startPromise
+    const calls = bridge.sendMessage.mock.calls.map(c => c[2])
+    expect(calls.some(c => c.length === 30)).toBe(true)
   })
 })
