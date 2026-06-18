@@ -110,6 +110,58 @@ describe('sendImageFromUrlWeixin', () => {
     })
 
     expect(result.messageId).toBe('sdk-msg-1')
-    expect(fetchSpy).toHaveBeenCalledWith('https://cdn.example.com/x.jpg')
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://cdn.example.com/x.jpg',
+      expect.objectContaining({ signal: expect.anything() })
+    )
+  })
+
+  it('throws on fetch failure (non-2xx)', async () => {
+    // @ts-expect-error — stub global
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, status: 404 })
+
+    const mod = await import('./weixin-bridge-runtime')
+    await expect(mod.weixinBridgeRuntimeInternals.sendImageFromUrlWeixin({
+      account: {
+        accountId: 'bot-1',
+        baseUrl: 'https://ilinkai.weixin.qq.com',
+        token: 'tk',
+        sessionKey: '',
+        createdAt: 0
+      } as never,
+      to: 'user-1',
+      imageUrl: 'https://cdn.example.com/x.jpg',
+      contextToken: 'ctx-1'
+    })).rejects.toThrow(/fetch failed status=404/)
+  })
+
+  it.each([
+    ['jpg', [0xff, 0xd8, 0xff]],
+    ['png', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+    ['gif', [0x47, 0x49, 0x46, 0x38, 0x39, 0x61]],
+    ['bmp', [0x42, 0x4d, 0x00, 0x00]],
+    ['webp', [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]],
+  ])('sniffs %s magic bytes and uploads', async (ext, magicBytes) => {
+    // @ts-expect-error — stub global
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: () => Promise.resolve(new Uint8Array(magicBytes).buffer)
+    })
+
+    const mod = await import('./weixin-bridge-runtime')
+    const result = await mod.weixinBridgeRuntimeInternals.sendImageFromUrlWeixin({
+      account: {
+        accountId: 'bot-1',
+        baseUrl: 'https://ilinkai.weixin.qq.com',
+        token: 'tk',
+        sessionKey: '',
+        createdAt: 0
+      } as never,
+      to: 'user-1',
+      imageUrl: `https://cdn.example.com/x.${ext}`,
+      contextToken: 'ctx-1'
+    })
+
+    expect(result.messageId).toBe('sdk-msg-1')
   })
 })

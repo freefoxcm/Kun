@@ -788,7 +788,8 @@ async function sendImageFromUrlWeixin(params: {
   timeoutMs?: number
 }): Promise<{ messageId: string }> {
   // 1. Download.
-  const res = await fetch(params.imageUrl)
+  const timeoutMs = params.timeoutMs ?? 15_000
+  const res = await fetch(params.imageUrl, { signal: AbortSignal.timeout(timeoutMs) })
   if (!res.ok) {
     throw new Error(
       `sendImageFromUrlWeixin: fetch failed status=${res.status} url=${params.imageUrl}`
