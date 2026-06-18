@@ -17,3 +17,12 @@ declare module '@tencent-weixin/openclaw-weixin/dist/src/messaging/send-media.js
     cdnBaseUrl: string
   }): Promise<{ messageId: string }>
 }
+
+declare module '@tencent-weixin/openclaw-weixin/dist/src/messaging/send.js' {
+  // Mirrors the re-export from send.js (v2.4.3): only StreamingMarkdownFilter
+  // is consumed by weixin-streamer.ts.
+  export class StreamingMarkdownFilter {
+    feed(delta: string): string
+    flush(): string
+  }
+}
