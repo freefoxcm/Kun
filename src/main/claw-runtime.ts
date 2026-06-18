@@ -856,6 +856,7 @@ export class ClawRuntime {
         threadId: input.threadId,
         contextToken: input.webhookPayload.message.context_token,
         minChars: 200,
+        maxChars: 1500,
         idleMs: 3000,
         responseTimeoutMs: input.responseTimeoutMs,
         logger: (category, message, detail) => this.deps.logError(category, message, detail)
