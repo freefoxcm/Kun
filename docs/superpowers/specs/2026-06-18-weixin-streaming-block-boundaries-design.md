@@ -51,9 +51,13 @@
 - 看到奇数次 ` ``` `（行首或独占行）→ 进入围栏
 - 看到偶数次 ` ``` ` → 离开围栏
 
-flush 时扫描边界候选：
-- 若所有候选都在围栏内 → 不切，等下次（除非达到 maxChars 兜底）
-- 若候选在围栏外 → 用该候选
+`findFlushBoundary(segment, minChars)` 在回扫边界候选时，过滤掉围栏内的候选：
+1. 在 segment 上扫描所有 `\n\n`、`.!?。！？` 后跟空白、`,;,，；` 后跟空白的位置
+2. 标记每个候选位置是否处于围栏内
+3. 从 minChars 位置向 segment 末端回扫，取**第一个围栏外**的候选
+
+如果 segment 中所有候选都在围栏内，函数返回 -1（不切），等下次。
+如果 segment.length > maxChars 且仍无围栏外候选 → 在 maxChars 处硬切（即便在围栏内）。
 
 ### 图片抽出发射
 
@@ -68,31 +72,67 @@ flush 时扫描边界候选：
 
 ### 发射循环（flush 时）
 
-```
-loop over pendingText from current position:
-  find next COMPLETE image in remaining pendingText
-  if no image:
-    textSegment = remaining pendingText
-    apply boundary logic to textSegment
-    emit textSegment as text bubble
-    pendingText = ""
-    break
-  else:
-    imageStart, imageEnd = image position
+```python
+def flushTick(force=False):
+  processed = True
+  while processed:
+    processed = False
+    imageMatch = findCompleteImage(pendingText)
+
+    if imageMatch is None:
+      # No more images: try to flush text
+      boundary = findFlushBoundary(pendingText, minChars)
+      if boundary > 0:
+        emitText(pendingText[0:boundary])
+        pendingText = pendingText[boundary:]
+        processed = True
+      elif pendingText.length > maxChars:
+        # No clean boundary, hard split at maxChars
+        emitText(pendingText[0:maxChars])
+        pendingText = pendingText[maxChars:]
+        processed = True
+      elif force:
+        # turn_completed: emit whatever is left
+        if pendingText:
+          emitText(pendingText)
+          pendingText = ''
+      # else: wait for more deltas
+      break
+
+    # Image found at [imageStart, imageEnd]
+    imageStart, imageEnd = imageMatch
     if imageStart > 0:
       textBefore = pendingText[0:imageStart]
-      apply boundary logic to textBefore
-      emit textBefore as text bubble
-    emit image at pendingText[imageStart:imageEnd]
+      boundary = findFlushBoundary(textBefore, minChars)
+      if boundary > 0:
+        emitText(textBefore[0:boundary])
+        pendingText = textBefore[boundary:] + pendingText[imageStart:]
+        processed = True
+        continue
+      elif textBefore.length > maxChars:
+        emitText(textBefore[0:maxChars])
+        pendingText = textBefore[maxChars:] + pendingText[imageStart:]
+        processed = True
+        continue
+      elif force:
+        # turn_completed with short text before image
+        emitText(textBefore)
+        pendingText = pendingText[imageStart:]
+        processed = True
+        continue
+      else:
+        # textBefore too short to flush, wait for more deltas
+        break
+
+    # Image at start of pendingText (or textBefore fully handled above)
+    emitImage(pendingText[imageStart:imageEnd])
     pendingText = pendingText[imageEnd:]
-    continue
+    processed = True
 ```
 
-`apply boundary logic`：
-- 如果 textSegment 长度 ≤ minChars：原样发射（不切）
-- 否则：从 textSegment 末尾向 minChars 位置回扫，按优先级顺序找第一个候选边界
-- 找到：在该边界处切，发射前半部分，pendingText 保留后半
-- 找不到（textSegment 全程无任何边界）→ 用 maxChars 兜底硬切
+触发时机：
+- `minChars` 到达（idle 或字符数）：调用 `flushTick(force=false)`
+- `turn_completed` / `turn_failed` / `turn_aborted`：调用 `flushTick(force=true)` 把残留全部发完
 
 ### BridgeHandle 扩展
 
