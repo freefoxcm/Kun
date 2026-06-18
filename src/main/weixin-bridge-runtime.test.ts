@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createRequire } from 'node:module'
 import { weixinBridgeRuntimeInternals } from './weixin-bridge-runtime'
 
@@ -61,5 +61,55 @@ describe('weixin bridge runtime', () => {
 
     expect(webhookGeneratedFiles({ ok: true, reply: 'no files' })).toEqual([])
     expect(webhookGeneratedFiles({ files: 'not-an-array' })).toEqual([])
+  })
+})
+
+describe('sendImageFromUrlWeixin', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.doMock('@tencent-weixin/openclaw-weixin/dist/src/messaging/send.js', () => ({
+      sendImageMessageWeixin: vi.fn().mockResolvedValue({ messageId: 'sdk-msg-1' })
+    }))
+    vi.doMock('@tencent-weixin/openclaw-weixin/dist/src/cdn/upload.js', () => ({
+      uploadFileToWeixin: vi.fn().mockResolvedValue({
+        filekey: 'fk-1',
+        fileSize: 1024,
+        fileSizeCiphertext: 1040,
+        aeskey: 'a'.repeat(32),
+        downloadEncryptedQueryParam: 'qp=1'
+      })
+    }))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.doUnmock('@tencent-weixin/openclaw-weixin/dist/src/messaging/send.js')
+    vi.doUnmock('@tencent-weixin/openclaw-weixin/dist/src/cdn/upload.js')
+    vi.resetModules()
+  })
+
+  it('downloads URL, uploads via SDK, calls sendImageMessageWeixin', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: () => Promise.resolve(new Uint8Array([0xff, 0xd8, 0xff]).buffer)
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const mod = await import('./weixin-bridge-runtime')
+    const result = await mod.weixinBridgeRuntimeInternals.sendImageFromUrlWeixin({
+      account: {
+        accountId: 'bot-1',
+        baseUrl: 'https://ilinkai.weixin.qq.com',
+        token: 'tk',
+        configured: true,
+        createdAt: 0
+      } as never,
+      to: 'user-1',
+      imageUrl: 'https://cdn.example.com/x.jpg',
+      contextToken: 'ctx-1'
+    })
+
+    expect(result.messageId).toBe('sdk-msg-1')
+    expect(fetchSpy).toHaveBeenCalledWith('https://cdn.example.com/x.jpg')
   })
 })

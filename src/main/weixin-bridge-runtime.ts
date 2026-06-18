@@ -10,6 +10,7 @@ import {
   type ServerResponse
 } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DEFAULT_WEIXIN_BRIDGE_RPC_URL } from '../shared/app-settings'
 import { logError, logInfo, logWarn } from './logger'
@@ -767,6 +768,102 @@ async function sendMessageWeixin(params: {
   return { messageId }
 }
 
+/**
+ * Download an image URL, upload it to the Weixin CDN via the bundled plugin,
+ * and send it as a weixin image message. Used by weixin-streamer when it
+ * extracts a complete ![alt](url) from streaming markdown.
+ *
+ * Pipeline:
+ *   1. fetch(url) → ArrayBuffer
+ *   2. write to OS temp file (extension from URL or magic-byte sniff)
+ *   3. uploadFileToWeixin({ filePath, toUserId, opts })
+ *   4. sendImageMessageWeixin({ to, uploaded, opts })
+ *   5. unlink temp file (best-effort)
+ */
+async function sendImageFromUrlWeixin(params: {
+  account: WeixinAccount
+  to: string
+  imageUrl: string
+  contextToken?: string
+  timeoutMs?: number
+}): Promise<{ messageId: string }> {
+  // 1. Download.
+  const res = await fetch(params.imageUrl)
+  if (!res.ok) {
+    throw new Error(
+      `sendImageFromUrlWeixin: fetch failed status=${res.status} url=${params.imageUrl}`
+    )
+  }
+  const buf = Buffer.from(await res.arrayBuffer())
+
+  // 2. Write to temp file with extension hint (SDK mime-sniffs via extension).
+  const ext = guessImageExtension(params.imageUrl, buf)
+  const tmpPath = join(tmpdir(), `kun-weixin-${randomUUID()}.${ext}`)
+  await writeFile(tmpPath, buf)
+
+  try {
+    // 3. Upload to CDN.
+    const { uploadFileToWeixin } = await import(
+      '@tencent-weixin/openclaw-weixin/dist/src/cdn/upload.js'
+    )
+    const uploaded = await uploadFileToWeixin({
+      filePath: tmpPath,
+      toUserId: params.to,
+      opts: { baseUrl: params.account.baseUrl, token: params.account.token }
+    })
+
+    // 4. Send image message.
+    const { sendImageMessageWeixin } = await import(
+      '@tencent-weixin/openclaw-weixin/dist/src/messaging/send.js'
+    )
+    const result = await sendImageMessageWeixin({
+      to: params.to,
+      text: '',
+      uploaded,
+      opts: {
+        baseUrl: params.account.baseUrl,
+        token: params.account.token,
+        contextToken: params.contextToken
+      }
+    })
+    return result
+  } finally {
+    // 5. Cleanup temp file (best-effort).
+    void unlink(tmpPath).catch(() => undefined)
+  }
+}
+
+function guessImageExtension(url: string, buf: Buffer): string {
+  // Magic-byte sniff first (more reliable than URL).
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg'
+  if (
+    buf.length >= 8 &&
+    buf[0] === 0x89 &&
+    buf[1] === 0x50 &&
+    buf[2] === 0x4e &&
+    buf[3] === 0x47
+  )
+    return 'png'
+  if (buf.length >= 6 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'gif'
+  if (buf.length >= 2 && buf[0] === 0x42 && buf[1] === 0x4d) return 'bmp'
+  if (
+    buf.length >= 12 &&
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x45 &&
+    buf[10] === 0x42 &&
+    buf[11] === 0x50
+  )
+    return 'webp'
+  // Fall back to URL extension.
+  const m = url.match(/\.(jpg|jpeg|png|gif|bmp|webp)(?:\?|$)/i)
+  if (m) return m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase()
+  return 'jpg' // last resort
+}
+
 function textFromItemList(itemList: unknown): string {
   if (!Array.isArray(itemList)) return ''
   for (const item of itemList) {
@@ -1258,5 +1355,6 @@ export function stopWeixinBridgeRuntime(): void {
 export const weixinBridgeRuntimeInternals = {
   buildBaseInfo,
   normalizeAccountId,
-  webhookGeneratedFiles
+  webhookGeneratedFiles,
+  sendImageFromUrlWeixin
 }
