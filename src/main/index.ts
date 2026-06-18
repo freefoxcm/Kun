@@ -73,7 +73,8 @@ import {
   ensureWeixinBridgeRpcUrl,
   getWeixinBridgeAccountUserId,
   sendWeixinBridgeMessage,
-  stopWeixinBridgeRuntime
+  stopWeixinBridgeRuntime,
+  weixinBridgeRuntimeInternals
 } from './weixin-bridge-runtime'
 import { webhookUrl } from './claw-runtime-helpers'
 import { isKunHealthResponseBody } from './kun-health'
@@ -1409,6 +1410,24 @@ app.whenReady().then(async () => {
           return { messageId: result.messageId }
         }
         throw new Error(result.message)
+      },
+      // Streaming image path: download the URL server-side, upload to
+      // the WeChat CDN via the bundled plugin, and ship it as a
+      // weixin image message. The `contextToken` hint is forwarded so
+      // the recipient's thread stays stitched across the text +
+      // image boundary.
+      sendImage: async (accountId, to, imageUrl, contextToken) => {
+        const account = await weixinBridgeRuntimeInternals.resolveWeixinAccount(accountId)
+        if (!account.configured || !account.token?.trim()) {
+          throw new Error('WeChat account is not configured.')
+        }
+        const result = await weixinBridgeRuntimeInternals.sendImageFromUrlWeixin({
+          account,
+          to,
+          imageUrl,
+          contextToken
+        })
+        return { messageId: result.messageId }
       }
     },
     resolveWeixinAccountUserId: getWeixinBridgeAccountUserId,

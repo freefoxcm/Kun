@@ -97,6 +97,20 @@ export type WeixinBridgeHandle = {
     text: string,
     contextToken: string | undefined
   ) => Promise<{ messageId: string }>
+  /**
+   * Download `imageUrl` server-side, upload it to the WeChat CDN, and send
+   * it as a weixin image message to `to`. Returns the resulting
+   * `messageId` so the streamer can keep an in-band delivery log. The
+   * `contextToken` argument is the inbound webhook's first-token hint
+   * and is forwarded to the underlying `sendImageMessageWeixin` call so
+   * the recipient's thread stays stitched.
+   */
+  sendImage: (
+    accountId: string,
+    to: string,
+    imageUrl: string,
+    contextToken: string | undefined
+  ) => Promise<{ messageId: string }>
 }
 
 type IncomingRemoteSession = Pick<

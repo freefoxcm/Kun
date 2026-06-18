@@ -4192,7 +4192,8 @@ describe('ClawRuntime handleFeishuMessage streaming', () => {
     // WeChat streaming bridge: sendMessage returns a messageId; the
     // runtime will deliver the assistant text in-band through it.
     const weixinBridge = {
-      sendMessage: vi.fn(async () => ({ messageId: 'wx_msg_stream_1' }))
+      sendMessage: vi.fn(async () => ({ messageId: 'wx_msg_stream_1' })),
+      sendImage: vi.fn(async () => ({ messageId: 'wx_msg_stream_img_1' }))
     }
     const runtime = createClawRuntime({
       store: store as never,
@@ -4327,7 +4328,8 @@ describe('ClawRuntime handleFeishuMessage streaming', () => {
       throw new Error(`unexpected path ${path}`)
     })
     const weixinBridge = {
-      sendMessage: vi.fn(async () => ({ messageId: 'wx_msg_fb_partial' }))
+      sendMessage: vi.fn(async () => ({ messageId: 'wx_msg_fb_partial' })),
+      sendImage: vi.fn(async () => ({ messageId: 'wx_msg_fb_partial_img' }))
     }
     const runtime = createClawRuntime({
       store: store as never,
@@ -4473,7 +4475,8 @@ describe('ClawRuntime handleFeishuMessage streaming', () => {
       sendMessage: vi.fn(async (accountId: string, to: string, text: string, contextToken: string | undefined) => {
         sendMessageCalls.push({ accountId, to, text, contextToken })
         return { messageId: 'wx_msg_fb_sorry' }
-      })
+      }),
+      sendImage: vi.fn(async () => ({ messageId: 'wx_msg_fb_sorry_img' }))
     }
     const runtime = createClawRuntime({
       store: store as never,
@@ -4609,7 +4612,8 @@ describe('ClawRuntime handleFeishuMessage streaming', () => {
     // Inject a weixinBridge to prove that the gate is on
     // channel.weixinStream, not on the presence of the bridge.
     const weixinBridge = {
-      sendMessage: vi.fn(async () => ({ messageId: 'wx_msg_unused' }))
+      sendMessage: vi.fn(async () => ({ messageId: 'wx_msg_unused' })),
+      sendImage: vi.fn(async () => ({ messageId: 'wx_msg_unused_img' }))
     }
     const runtime = createClawRuntime({
       store: store as never,
@@ -4720,7 +4724,8 @@ describe('ClawRuntime handleFeishuMessage streaming', () => {
       sendMessage: vi.fn(async (_accountId: string, _to: string, text: string, contextToken: string | undefined) => {
         sendMessageCalls.push({ callIndex: sendMessageCalls.length, text, contextToken })
         return { messageId: `wx_msg_${sendMessageCalls.length}` }
-      })
+      }),
+      sendImage: vi.fn(async () => ({ messageId: 'wx_msg_unused_img_2' }))
     }
     const runtime = createClawRuntime({
       store: store as never,

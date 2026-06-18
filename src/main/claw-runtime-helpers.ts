@@ -52,6 +52,12 @@ export type ClawRuntimeDeps = {
       text: string,
       contextToken: string | undefined
     ) => Promise<{ messageId: string }>
+    sendImage: (
+      accountId: string,
+      to: string,
+      imageUrl: string,
+      contextToken: string | undefined
+    ) => Promise<{ messageId: string }>
   }
   /** WeChat owner (`ilink_user_id`) for a bridge account; '' when unknown. */
   resolveWeixinAccountUserId?: (accountId: string) => Promise<string>

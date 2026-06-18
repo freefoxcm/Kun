@@ -1356,6 +1356,7 @@ export function stopWeixinBridgeRuntime(): void {
 export const weixinBridgeRuntimeInternals = {
   buildBaseInfo,
   normalizeAccountId,
+  resolveWeixinAccount,
   webhookGeneratedFiles,
   sendImageFromUrlWeixin
 }
