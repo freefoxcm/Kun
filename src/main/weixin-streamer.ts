@@ -98,17 +98,14 @@ export class WeixinStreamer {
   }
 
   async start(input: { subscribe: SseSubscriber }): Promise<WeixinStreamerResult> {
-    console.log('[start] entry')
     let closeRef: () => void = () => {}
     const ac = new AbortController()
-    console.log('[start] ac created')
 
     // Pre-load filter lazily (non-blocking; if load fails, fall back to no filter)
     void loadStreamingMarkdownFilter().then(() => {
       const Ctor = _StreamingMarkdownFilterCtor
       if (Ctor) this.filter = new Ctor()
     })
-    console.log('[start] filter load initiated')
 
     // If subscribe() throws synchronously, propagate the rejection so callers
     // can react (and the wait below can be unblocked by markClosed()).
@@ -143,25 +140,19 @@ export class WeixinStreamer {
     // vi.advanceTimersByTime to simulate elapsed time.
     await new Promise<void>((resolve) => {
       this.closeResolver = resolve
-      console.log('[start] inner Promise setup, closeResolver set, closed=', this.closed)
       const tick = () => {
-        console.log('[start] tick running, closed=', this.closed)
         checkTimeout()
         if (this.closed) {
-          console.log('[start] tick sees closed=true, resolving')
           resolve()
           return
         }
         setTimeout(tick, 50)
       }
       void setup.then(() => {
-        console.log('[start] setup.then fired, closed=', this.closed)
-        if (this.closed) { console.log('[start] closed at setup, resolving'); resolve(); return }
-        console.log('[start] calling tick')
+        if (this.closed) { resolve(); return }
         tick()
-      }, (err) => { console.log('[start] setup rejected', err); resolve() })
+      }, () => { resolve() })
     })
-    console.log('[start] inner Promise resolved')
     closeRef()
     // Surface subscribe failure (if any) now that the wait has unwound.
     await setup
@@ -264,7 +255,7 @@ export class WeixinStreamer {
       }
 
       const result = this.pickTextBoundary(this.pendingText, force)
-      if (result.kind === 'found' || result.kind === 'forceFound') {
+      if (result.kind === 'found') {
         // For sentence/comma boundaries, the index points AFTER punctuation
         // but BEFORE the trailing space (per findFlushBoundaries convention).
         // Consume the trailing whitespace too so the bubble reads as a
@@ -279,6 +270,10 @@ export class WeixinStreamer {
           }
         }
         const emit = this.pendingText.slice(0, splitIdx)
+        // For paragraph boundaries, the first `\n` of `\n\n` was absorbed into
+        // the boundary index (see weixin-stream-boundaries.ts PREFIX-END doc).
+        // Skip past it so the tail starts with the second `\n`, preserving
+        // the paragraph break visually.
         const tail = result.boundaryType === 'paragraph'
           ? this.pendingText.slice(result.index + 1)
           : this.pendingText.slice(splitIdx)
@@ -310,40 +305,36 @@ export class WeixinStreamer {
 
   /**
    * Pick a boundary index for `segment`:
-   * - 'found' with index = first fence-safe boundary at or after minChars
-   * - 'forceFound' with index = first fence-safe boundary past index 0 (force mode)
+   * - 'found' with index = first fence-safe boundary at or after the minimum
+   *   threshold. When `force=true` the threshold drops to `>= 1` (a boundary
+   *   at index 0 would emit empty text and loop forever); otherwise it is
+   *   the configured `minChars`.
    * - 'forceHard' if segment.length > maxChars and no clean boundary
    * - 'wait' if segment too short to flush
    */
-  private pickTextBoundary(segment: string, force: boolean):
-    | { kind: 'found'; index: number; boundaryType: 'paragraph' | 'sentence' | 'comma' }
-    | { kind: 'forceFound'; index: number; boundaryType: 'paragraph' | 'sentence' | 'comma' }
-    | { kind: 'forceHard' }
-    | { kind: 'wait' } {
+  private pickTextBoundary(segment: string, force: boolean): { kind: 'found'; index: number; boundaryType: 'paragraph' | 'sentence' | 'comma' } | { kind: 'forceHard' } | { kind: 'wait' } {
     if (!segment) return { kind: 'wait' }
     const candidates = findFlushBoundaries(segment)
-    if (force) {
-      // Under force, split at the EARLIEST fence-safe boundary past index 0
-      // — a boundary at 0 would emit empty text and loop forever.
-      const usable = candidates.find(b => !b.insideFence && b.index > 0)
-      if (usable) return { kind: 'forceFound', index: usable.index, boundaryType: usable.type }
-    } else {
-      const usable = candidates.find(b => !b.insideFence && b.index >= this.opts.minChars)
-      if (usable) return { kind: 'found', index: usable.index, boundaryType: usable.type }
-    }
+    // When force=true, accept the earliest fence-safe boundary past index 0
+    // (regardless of minChars). Otherwise, require boundary index >= minChars.
+    const minIndex = force ? 1 : this.opts.minChars
+    const usable = candidates.find(b => !b.insideFence && b.index >= minIndex)
+    if (usable) return { kind: 'found', index: usable.index, boundaryType: usable.type }
     if (segment.length > this.maxChars) return { kind: 'forceHard' }
     return { kind: 'wait' }
   }
 
   private async emitText(text: string): Promise<void> {
     if (!text) return
-    console.log('[emitText] start len=', text.length, 'text=', JSON.stringify(text))
     try {
       await this.opts.bridge.sendMessage(this.opts.accountId, this.opts.to, text, this.opts.contextToken)
       this.consecutiveFailures = 0
       this.messageCount += 1
+      // Mark first text flush so subsequent text blocks wait for minChars or
+      // turn_completed instead of the idle timer (which would split coherent
+      // replies). Image-only flushes don't set this flag because they don't
+      // carry the same "mid-sentence" signal.
       this.hasFlushedOnce = true
-      console.log('[emitText] success messageCount=', this.messageCount)
     } catch (err) {
       this.consecutiveFailures += 1
       this.opts.logger('weixin-stream', 'sendMessage failed', {
