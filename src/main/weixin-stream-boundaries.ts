@@ -34,6 +34,16 @@ export class FenceState {
 
 export type BoundaryType = 'paragraph' | 'sentence' | 'comma'
 
+/**
+ * A potential flush position within a text segment.
+ *
+ * Index convention (PREFIX-END): in all cases, `text.slice(0, boundary.index)`
+ * yields the content to emit, and `text.slice(boundary.index)` is what stays.
+ * - `paragraph`: index points AT the first `\n` of the `\n\n` pair (the blank
+ *   line itself is excluded from the emitted prefix)
+ * - `sentence` / `comma`: index points AFTER the punctuation (the punctuation
+ *   IS included in the emitted prefix)
+ */
 export type Boundary = {
   index: number
   type: BoundaryType
@@ -61,7 +71,8 @@ export function findFlushBoundaries(segment: string): Boundary[] {
   }
 
   // Helper: is `pos` inside any open fence in `segment`?
-  // After each toggle index, fence state flips. Determine state at `pos`.
+  // At each toggle position, fence has NOT yet flipped (strict >),
+  // so the toggle char itself is treated as the start of the new fence state.
   function isInsideFenceAt(pos: number): boolean {
     let state = false
     for (const t of fenceToggles) {

@@ -128,4 +128,13 @@ describe('findFlushBoundaries', () => {
       expect(bs[i].index).toBeGreaterThan(bs[i - 1].index)
     }
   })
+
+  it('dedups paragraph over sentence when punctuation precedes \\n\\n', () => {
+    const bs = findFlushBoundaries('Hello.\n\nWorld')
+    // Paragraph (index 6) and sentence (after `.` at index 6) collide.
+    // Paragraph wins via priority dedup.
+    expect(bs.filter(b => b.index === 6)).toEqual([
+      { index: 6, type: 'paragraph', insideFence: false }
+    ])
+  })
 })
