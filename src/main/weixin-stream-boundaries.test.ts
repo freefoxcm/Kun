@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FenceState, findFlushBoundaries } from './weixin-stream-boundaries'
+import { FenceState, findFlushBoundaries, findCompleteImage } from './weixin-stream-boundaries'
 
 describe('FenceState', () => {
   it('starts outside any fence', () => {
@@ -136,5 +136,53 @@ describe('findFlushBoundaries', () => {
     expect(bs.filter(b => b.index === 6)).toEqual([
       { index: 6, type: 'paragraph', insideFence: false }
     ])
+  })
+})
+
+describe('findCompleteImage', () => {
+  it('returns null for text without image', () => {
+    expect(findCompleteImage('plain text')).toBeNull()
+  })
+
+  it('matches ![alt](https://url)', () => {
+    const r = findCompleteImage('Hello ![chart](https://example.com/x.png) world')
+    expect(r).toEqual({
+      start: 6, end: 41, url: 'https://example.com/x.png'
+    })
+  })
+
+  it('matches absolute path ![](/local/path)', () => {
+    const r = findCompleteImage('see ![](/tmp/x.png) below')
+    expect(r?.url).toBe('/tmp/x.png')
+  })
+
+  it('matches empty alt ![](url)', () => {
+    const r = findCompleteImage('![](https://e.com/x.png)')
+    expect(r).not.toBeNull()
+  })
+
+  it('returns null for incomplete ![alt](url without closing paren', () => {
+    expect(findCompleteImage('see ![alt](https://e.com/x.png here')).toBeNull()
+  })
+
+  it('returns null for incomplete ![ without alt/paren', () => {
+    expect(findCompleteImage('here ![partial text')).toBeNull()
+  })
+
+  it('does NOT match ![alt](url "title") — title not supported', () => {
+    // Title form is out of scope. Should return null so the streamer keeps
+    // the text in pendingText and never extracts it as an image.
+    expect(findCompleteImage('![alt](https://e.com/x.png "title")')).toBeNull()
+  })
+
+  it('does not match http:// or relative URLs that lack leading /', () => {
+    // Only https/http and absolute / paths supported.
+    expect(findCompleteImage('![alt](ftp://e.com/x.png)')).toBeNull()
+    expect(findCompleteImage('![alt](./relative.png)')).toBeNull()
+  })
+
+  it('returns FIRST complete image in the segment', () => {
+    const r = findCompleteImage('a ![one](https://a.com/1.png) b ![two](https://b.com/2.png)')
+    expect(r?.url).toBe('https://a.com/1.png')
   })
 })

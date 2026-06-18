@@ -145,3 +145,35 @@ export function findFlushBoundaries(segment: string): Boundary[] {
   }
   return deduped
 }
+
+export type ImageMatch = {
+  start: number  // index of '!' in pendingText
+  end: number    // index AFTER ')' in pendingText
+  url: string
+}
+
+const IMAGE_RE = /!\[[^\]]*\]\((?:https?:|\/)[^\s)]+\)/g
+
+/**
+ * Find the FIRST complete `![alt](url)` image markdown in `text`. Returns
+ * null if no complete image exists (e.g., the markdown is split across an
+ * SSE delta boundary and the closing `)` hasn't arrived yet).
+ *
+ * Supports only `https?://` and absolute `/(...)` paths. Title form
+ * `![alt](url "title")` is intentionally NOT matched — those stay in
+ * pendingText and get emitted as-is when the stream ends.
+ */
+export function findCompleteImage(text: string): ImageMatch | null {
+  IMAGE_RE.lastIndex = 0
+  const m = IMAGE_RE.exec(text)
+  if (!m) return null
+  const matched = m[0]
+  // Extract URL from inside the parens: `![alt](URL)`
+  const parenStart = matched.indexOf('(')
+  const url = matched.slice(parenStart + 1, matched.length - 1)
+  return {
+    start: m.index,
+    end: m.index + matched.length,
+    url
+  }
+}
