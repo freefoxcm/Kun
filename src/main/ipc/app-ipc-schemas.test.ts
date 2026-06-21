@@ -254,6 +254,60 @@ describe('app-ipc-schemas', () => {
     expect(payload.agents?.kun?.videoGeneration?.defaultResolution).toBe('1080P')
   })
 
+  it('accepts long provider model ids imported from upstream catalogs', () => {
+    const longModelId = `openrouter/${'provider-routed-model-id-'.repeat(6)}preview`
+
+    expect(longModelId.length).toBeGreaterThan(128)
+
+    const payload = settingsPatchSchema.parse({
+      provider: {
+        providers: [{
+          id: 'openrouter',
+          name: 'OpenRouter',
+          baseUrl: 'https://openrouter.ai/api/v1',
+          endpointFormat: 'chat_completions',
+          models: [longModelId],
+          modelProfiles: {
+            [longModelId]: {
+              aliases: [longModelId],
+              contextWindowTokens: 128000
+            }
+          },
+          image: {
+            protocol: 'openai-images',
+            baseUrl: 'https://openrouter.ai/api/v1',
+            models: [longModelId]
+          }
+        }]
+      },
+      agents: {
+        kun: {
+          model: longModelId,
+          modelProfiles: {
+            [longModelId]: {
+              aliases: [longModelId],
+              contextWindowTokens: 128000
+            }
+          },
+          imageGeneration: {
+            model: longModelId
+          }
+        }
+      },
+      schedule: {
+        model: longModelId
+      },
+      workflow: {
+        model: longModelId
+      }
+    })
+
+    expect(payload.provider?.providers?.[0]?.models).toEqual([longModelId])
+    expect(payload.agents?.kun?.model).toBe(longModelId)
+    expect(payload.schedule?.model).toBe(longModelId)
+    expect(payload.workflow?.model).toBe(longModelId)
+  })
+
   it('accepts schedule settings patches and task payloads', () => {
     const payload = settingsPatchSchema.parse({
       schedule: {
