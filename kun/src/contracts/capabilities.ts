@@ -112,6 +112,7 @@ export const McpServerConfig = z
     transport: McpTransportKind,
     command: z.string().min(1).optional(),
     args: z.array(z.string()).default([]),
+    cwd: z.string().min(1).optional(),
     url: z.string().min(1).optional(),
     headers: StringRecord.default({}),
     env: StringRecord.default({}),
