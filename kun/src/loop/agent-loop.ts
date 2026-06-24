@@ -1775,6 +1775,34 @@ export class AgentLoop {
         this.lastNoToolTextByTurn.set(turnId, textAccumulator.value)
         return 'continue'
       }
+      if (stopReason === 'length') {
+        // The model hit its output-token ceiling and was cut off without a tool
+        // call. Don't report this as a clean completion — surface a warning so
+        // the truncation is visible instead of looking like the model "gave up".
+        const message =
+          'The model reached its maximum output length and the response was truncated. ' +
+          'Raise the model’s max output tokens, or ask it to continue or split the work into smaller steps.'
+        await this.opts.events.record({
+          kind: 'error',
+          threadId,
+          turnId,
+          message,
+          code: 'output_truncated',
+          severity: 'warning'
+        })
+        await this.opts.turns.applyItem(
+          threadId,
+          makeErrorItem({
+            id: this.opts.ids.next('item_error'),
+            turnId,
+            threadId,
+            message,
+            code: 'output_truncated',
+            severity: 'warning'
+          })
+        )
+        return 'stop'
+      }
       return 'stop'
     }
     // Tool calls mean the turn is making progress again; reset the no-tool

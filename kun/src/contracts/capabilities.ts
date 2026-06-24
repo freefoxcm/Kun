@@ -51,6 +51,11 @@ export const ModelCapabilityMetadata = z
     outputModalities: z.array(ModelInputModality).min(1),
     supportsToolCalling: z.boolean(),
     contextWindowTokens: z.number().int().positive().optional(),
+    // Maximum tokens the model may emit per response. When set it caps the
+    // request's output budget (max_tokens / max_output_tokens). Absent means
+    // "use the runtime default" — which is reasoning-aware for the Anthropic
+    // Messages format so thinking models don't truncate their tool calls.
+    maxOutputTokens: z.number().int().positive().optional(),
     messageParts: z.array(ModelMessagePartSupport).min(1),
     reasoning: ModelReasoningCapabilityMetadata.optional(),
     // Per-model wire-format override. Lets one provider route some models to
