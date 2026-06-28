@@ -152,7 +152,6 @@ export function SettingsView(): ReactElement {
   const formTheme = form?.theme
   const formUiFontScale = form?.uiFontScale
   const writeTypography = form?.write?.typography
-  const formWorkspaceRoot = form?.workspaceRoot
   const formKun = form ? getKunRuntimeSettings(form) : null
   const formPort = formKun?.port
   const formGuiUpdateChannel = form?.guiUpdate?.channel
@@ -388,15 +387,16 @@ export function SettingsView(): ReactElement {
     if (typeof window.kunGui?.listSkillRoots !== 'function') return
     setSkillRootsLoading(true)
     try {
-      const workspaceRoot = normalizeWorkspaceRoot(expandHomePath(formWorkspaceRoot ?? ''))
-      const result = await window.kunGui.listSkillRoots(workspaceRoot || undefined)
+      // Settings is global: list every configured skill root from persisted
+      // settings, not the sidebar's currently selected project workspace.
+      const result = await window.kunGui.listSkillRoots()
       if (result.ok) setSkillRoots(result.roots)
     } catch {
       /* listing skill roots is best-effort; keep the last known list */
     } finally {
       setSkillRootsLoading(false)
     }
-  }, [expandHomePath, formWorkspaceRoot])
+  }, [])
 
   useEffect(() => {
     if (category !== 'agents') return
@@ -492,9 +492,7 @@ export function SettingsView(): ReactElement {
     setRuntimeDiagnosticsBusy(true)
     setRuntimeDiagnosticsNotice(null)
     try {
-      const loaded = await loadKunDiagnostics(provider, {
-        workspace: normalizeWorkspaceRoot(expandHomePath(formWorkspaceRoot ?? ''))
-      })
+      const loaded = await loadKunDiagnostics(provider, { listAllMemories: true })
       if (loaded.runtimeInfo !== undefined) setRuntimeInfo(loaded.runtimeInfo)
       if (loaded.toolDiagnostics !== undefined) setToolDiagnostics(loaded.toolDiagnostics)
       if (loaded.memoryRecords !== undefined) setMemoryRecords(loaded.memoryRecords)
@@ -512,7 +510,7 @@ export function SettingsView(): ReactElement {
     } finally {
       setRuntimeDiagnosticsBusy(false)
     }
-  }, [expandHomePath, formWorkspaceRoot])
+  }, [])
 
   useEffect(() => {
     if (category !== 'agents' && category !== 'memory') return
@@ -535,18 +533,31 @@ export function SettingsView(): ReactElement {
     void refreshMemoryDiagnostics()
   }, [category, memoryRecords])
 
+  const memoryMutationWorkspace = useCallback((memoryId: string): string | undefined => {
+    const record = memoryRecords.find((item) => item.id === memoryId)
+    if (!record || record.scope === 'user') return undefined
+    if (record.scope === 'project') {
+      return record.project ?? record.workspace
+    }
+    return record.workspace
+  }, [memoryRecords])
+
   const createMemoryRecord = async (input: {
     content: string
     scope?: 'user' | 'workspace' | 'project'
+    targetPath?: string
     tags?: string[]
     confidence?: number
   }): Promise<boolean> => {
     const provider = getProvider()
     if (typeof provider.createMemory !== 'function') return false
     try {
-      const workspace = normalizeWorkspaceRoot(formWorkspaceRoot)
+      const workspace = normalizeWorkspaceRoot(expandHomePath(input.targetPath ?? ''))
       const memory = await provider.createMemory({
-        ...input,
+        content: input.content,
+        scope: input.scope,
+        tags: input.tags,
+        confidence: input.confidence,
         ...(input.scope === 'user' ? {} : { workspace }),
         ...(input.scope === 'project' ? { project: workspace } : {})
       })
@@ -569,7 +580,7 @@ export function SettingsView(): ReactElement {
     if (typeof provider.updateMemory !== 'function') return false
     try {
       const memory = await provider.updateMemory(memoryId, patch, {
-        workspace: normalizeWorkspaceRoot(formWorkspaceRoot)
+        workspace: memoryMutationWorkspace(memoryId)
       })
       setMemoryRecords((records) => records.map((record) => (record.id === memoryId ? memory : record)))
       return true
@@ -587,7 +598,7 @@ export function SettingsView(): ReactElement {
     if (typeof provider.updateMemory !== 'function') return
     try {
       const memory = await provider.updateMemory(memoryId, { disabled: true }, {
-        workspace: normalizeWorkspaceRoot(formWorkspaceRoot)
+        workspace: memoryMutationWorkspace(memoryId)
       })
       setMemoryRecords((records) => records.map((record) => record.id === memoryId ? memory : record))
     } catch (error) {
@@ -603,7 +614,7 @@ export function SettingsView(): ReactElement {
     if (typeof provider.deleteMemory !== 'function') return
     try {
       await provider.deleteMemory(memoryId, {
-        workspace: normalizeWorkspaceRoot(formWorkspaceRoot)
+        workspace: memoryMutationWorkspace(memoryId)
       })
       setMemoryRecords((records) => records.filter((record) => record.id !== memoryId))
     } catch (error) {

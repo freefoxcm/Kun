@@ -1231,6 +1231,7 @@
   "memoryCancel": "取消",
   "memoryEmpty": "暂无记忆记录。助手会在了解你的偏好后自动创建,也可以手动添加。",
   "memoryContentPlaceholder": "想让助手记住什么?例如:「偏好 TypeScript,2 空格缩进」",
+  "memoryTargetPathPlaceholder": "工作区或项目目录的绝对路径",
   "memoryTagsPlaceholder": "标签,逗号分隔",
   "memoryConfidence": "置信度",
   "memoryProject": "所属项目",

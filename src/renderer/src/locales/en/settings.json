@@ -1231,6 +1231,7 @@
   "memoryCancel": "Cancel",
   "memoryEmpty": "No memory records yet. The assistant will create them automatically as it learns your preferences, or add one manually.",
   "memoryContentPlaceholder": "What should the assistant remember? e.g. \"Prefer TypeScript with 2-space indentation.\"",
+  "memoryTargetPathPlaceholder": "Absolute path to the workspace or project directory",
   "memoryTagsPlaceholder": "Tags, comma-separated",
   "memoryConfidence": "Confidence",
   "memoryProject": "Project",
