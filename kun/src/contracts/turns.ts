@@ -50,6 +50,12 @@ export const TurnStatus = z.enum([
 ])
 export type TurnStatus = z.infer<typeof TurnStatus>
 
+export const InjectedMemorySummarySchema = z.object({
+  id: z.string().min(1),
+  content: z.string()
+})
+export type InjectedMemorySummary = z.infer<typeof InjectedMemorySummarySchema>
+
 export const TurnSchema = z.object({
   id: z.string().min(1),
   threadId: z.string().min(1),
@@ -66,6 +72,7 @@ export const TurnSchema = z.object({
   attachmentIds: z.array(z.string().min(1)).default([]),
   activeSkillIds: z.array(z.string().min(1)).default([]),
   injectedMemoryIds: z.array(z.string().min(1)).default([]),
+  injectedMemorySummaries: z.array(InjectedMemorySummarySchema).default([]),
   skillInjectionBytes: z.number().int().nonnegative().optional(),
   workspaceCheckpointId: z.string().min(1).optional(),
   toolCatalogFingerprint: z.string().optional(),

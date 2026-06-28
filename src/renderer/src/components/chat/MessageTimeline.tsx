@@ -28,6 +28,7 @@ import {
   type Turn
 } from './message-timeline-turns'
 import { extractPlanMetadataFromBlock } from '../../plan/plan-tool'
+import { InjectedMemoryLookupProvider } from './injected-memory-lookup'
 import { planDisplayNameFromRelativePath } from '../../plan/plan-path'
 
 export { summarizeToolBlock } from './message-timeline-process'
@@ -255,6 +256,7 @@ export function MessageTimeline({
   }
 
   return (
+    <InjectedMemoryLookupProvider workspaceRoot={workspaceRoot}>
     <div ref={containerRef} className="ds-no-drag relative flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden">
       {visibleTurnAnchors.length > 2 ? (
         <nav
@@ -409,6 +411,7 @@ export function MessageTimeline({
         <div ref={endRef} aria-hidden className="h-px w-full shrink-0" />
       </div>
     </div>
+    </InjectedMemoryLookupProvider>
   )
 }
 

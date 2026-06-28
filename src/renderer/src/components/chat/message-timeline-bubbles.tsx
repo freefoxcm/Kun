@@ -17,6 +17,7 @@ import { ImagePreviewLightbox } from './ImagePreviewLightbox'
 import { ModelMetaTag, WritePromptMetaDisclosure } from './message-timeline-cards'
 import { readNumber, formatDuration, formatToolTitle } from './message-timeline-tools'
 import { answersByQuestionId, shouldShowQuestionHeader } from './user-input-panel-logic'
+import { InjectedMemoryMetaChip } from './injected-memory-meta-chip'
 
 const COPY_FEEDBACK_RESET_MS = 1600
 
@@ -893,9 +894,7 @@ function RuntimeMetaChips({
         </span>
       ) : null}
       {injectedMemoryIds.length > 0 ? (
-        <span className={chipClass} title={injectedMemoryIds.join(', ')}>
-          {t('toolInjectedMemories')} {injectedMemoryIds.length}
-        </span>
+        <InjectedMemoryMetaChip meta={meta} memoryIds={injectedMemoryIds} chipClass={chipClass} />
       ) : null}
       {childLabel ? (
         <span className={chipClass} title={childLabel}>

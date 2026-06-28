@@ -28,6 +28,7 @@ import { MessageBubble } from './message-timeline-bubbles'
 import { blockHasPendingRuntimeWork, splitThink } from './message-timeline-turns'
 import { formatDuration, formatToolTitle } from './message-timeline-tools'
 import { SubagentGroup } from './SubagentCallCard'
+import { InjectedMemoryMetaChip } from './injected-memory-meta-chip'
 
 export type ProcessSection = {
   id: string
@@ -983,9 +984,7 @@ function RuntimeMetaBadges({
         </span>
       ) : null}
       {injectedMemoryIds.length > 0 ? (
-        <span className={chipClass} title={injectedMemoryIds.join(', ')}>
-          {t('toolInjectedMemories')} {injectedMemoryIds.length}
-        </span>
+        <InjectedMemoryMetaChip meta={meta} memoryIds={injectedMemoryIds} chipClass={chipClass} />
       ) : null}
       {attachmentIds.length > 0 ? (
         <span className={chipClass} title={attachmentIds.join(', ')}>

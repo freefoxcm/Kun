@@ -446,6 +446,7 @@ export class TurnService {
       Partial<Turn>,
       | 'activeSkillIds'
       | 'injectedMemoryIds'
+      | 'injectedMemorySummaries'
       | 'skillInjectionBytes'
       | 'toolCatalogFingerprint'
       | 'toolCatalogToolCount'
@@ -460,6 +461,9 @@ export class TurnService {
               ...turn,
               ...(patch.activeSkillIds ? { activeSkillIds: [...patch.activeSkillIds] } : {}),
               ...(patch.injectedMemoryIds ? { injectedMemoryIds: [...patch.injectedMemoryIds] } : {}),
+              ...(patch.injectedMemorySummaries
+                ? { injectedMemorySummaries: [...patch.injectedMemorySummaries] }
+                : {}),
               ...(patch.skillInjectionBytes !== undefined ? { skillInjectionBytes: patch.skillInjectionBytes } : {}),
               ...(patch.toolCatalogFingerprint ? { toolCatalogFingerprint: patch.toolCatalogFingerprint } : {}),
               ...(patch.toolCatalogToolCount !== undefined ? { toolCatalogToolCount: patch.toolCatalogToolCount } : {}),

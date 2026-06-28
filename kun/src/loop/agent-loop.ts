@@ -54,6 +54,7 @@ import {
   makeErrorItem
 } from '../domain/item.js'
 import { touchThread } from '../domain/thread.js'
+import { memoryPreview } from '../shared/memory-preview.js'
 import { repairModelHistoryItems } from '../domain/model-history-repair.js'
 import type { TurnItem } from '../contracts/items.js'
 import type { ThreadGoal, ThreadTodoList } from '../contracts/threads.js'
@@ -1509,6 +1510,10 @@ export class AgentLoop {
         activeSkillIds: skillResolution.activeSkillIds,
         skillInjectionBytes: skillResolution.injectedBytes,
         injectedMemoryIds: memories.map((memory) => memory.id),
+        injectedMemorySummaries: memories.map((memory) => ({
+          id: memory.id,
+          content: memoryPreview(memory.content)
+        })),
         toolCatalogFingerprint: toolCatalog.fingerprint,
         toolCatalogToolCount: toolCatalog.toolCount,
         toolCatalogDrift: toolCatalogDrift.kind !== 'none'
